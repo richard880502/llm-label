@@ -1,0 +1,60 @@
+services:
+  app:
+    build: .
+    image: annotation-app:0.1.0
+    # 只綁 localhost：本機可除錯，但不直接對公網開放，
+    # 對外流量一律走 caddy 的 HTTPS。
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./data:/app/data
+      - ./static:/app/static
+    environment:
+      - SECRET_KEY=change-this-to-a-long-random-string
+      - ADMIN_USERNAME=admin
+      - ADMIN_PASSWORD=admin
+      - GOOGLE_CLIENT_ID=
+      - TZ=Asia/Taipei
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      - TZ=Asia/Taipei
+    depends_on:
+      - app
+      - mcp
+    restart: unless-stopped
+
+  mcp:
+    build: ./mcp_server
+    image: annotation-mcp:0.2.0
+    environment:
+      - ANNOTATION_API_URL=http://app:8080
+      - MCP_TRANSPORT=streamable-http
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=8000
+      - TZ=Asia/Taipei
+    depends_on:
+      - app
+    restart: unless-stopped
+
+  datasette:
+    image: datasetteproject/datasette
+    ports:
+      - "127.0.0.1:8081:8001"
+    volumes:
+      - ./data:/mnt/data
+    command: datasette /mnt/data/annotation.db --host 0.0.0.0 --port 8001 --setting sql_time_limit_ms 5000 --setting max_returned_rows 5000
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:

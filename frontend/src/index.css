@@ -1,0 +1,158 @@
+@import "tailwindcss";
+@import "@fontsource-variable/geist";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-heading: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Code", monospace;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+}
+
+:root {
+  color-scheme: light;
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+  --radius-2xl: 1.5rem;
+
+  --background: oklch(0.97 0.006 255);
+  --foreground: oklch(0.13 0.015 255);
+  --card: oklch(1 0 0 / 0.55);
+  --card-foreground: oklch(0.13 0.015 255);
+  --popover: oklch(1 0 0 / 0.85);
+  --popover-foreground: oklch(0.13 0.015 255);
+  --primary: oklch(0.54 0.22 255);
+  --primary-foreground: oklch(0.99 0 0);
+  --secondary: oklch(1 0 0 / 0.5);
+  --secondary-foreground: oklch(0.2 0.01 255);
+  --muted: oklch(0 0 0 / 0.05);
+  --muted-foreground: oklch(0.5 0.02 255);
+  --accent: oklch(0 0 0 / 0.04);
+  --accent-foreground: oklch(0.2 0.01 255);
+  --destructive: oklch(0.58 0.24 27);
+  --destructive-foreground: oklch(0.99 0 0);
+  --border: oklch(0 0 0 / 0.1);
+  --input: oklch(0 0 0 / 0.07);
+  --ring: oklch(0.54 0.22 255);
+}
+
+.dark {
+  color-scheme: dark;
+  --background: oklch(0.1 0.015 255);
+  --foreground: oklch(0.96 0.005 255);
+  --card: oklch(1 0 0 / 0.06);
+  --card-foreground: oklch(0.96 0.005 255);
+  --popover: oklch(0.12 0.02 255 / 0.85);
+  --popover-foreground: oklch(0.96 0.005 255);
+  --primary: oklch(0.65 0.2 255);
+  --primary-foreground: oklch(0.1 0.01 255);
+  --secondary: oklch(1 0 0 / 0.07);
+  --secondary-foreground: oklch(0.96 0.005 255);
+  --muted: oklch(1 0 0 / 0.07);
+  --muted-foreground: oklch(0.6 0.018 255);
+  --accent: oklch(1 0 0 / 0.07);
+  --accent-foreground: oklch(0.96 0.005 255);
+  --destructive: oklch(0.7 0.19 22);
+  --destructive-foreground: oklch(0.96 0 0);
+  --border: oklch(1 0 0 / 0.1);
+  --input: oklch(1 0 0 / 0.09);
+  --ring: oklch(0.6 0.18 255);
+}
+
+/* ── Gradient mesh background (fixed so glass elements blur over it) ── */
+html {
+  min-height: 100%;
+  background:
+    radial-gradient(ellipse at 12% 40%, oklch(0.82 0.14 285 / 0.5) 0, transparent 60%),
+    radial-gradient(ellipse at 88% 10%, oklch(0.86 0.09 220 / 0.4) 0, transparent 55%),
+    radial-gradient(ellipse at 55% 92%, oklch(0.84 0.12 315 / 0.35) 0, transparent 55%),
+    radial-gradient(ellipse at 50% 50%, oklch(0.90 0.04 260 / 0.2) 0, transparent 70%),
+    oklch(0.97 0.006 255);
+  background-attachment: fixed;
+}
+
+html.dark {
+  background:
+    radial-gradient(ellipse at 12% 40%, oklch(0.16 0.18 285 / 0.75) 0, transparent 60%),
+    radial-gradient(ellipse at 88% 10%, oklch(0.12 0.1 220 / 0.6) 0, transparent 55%),
+    radial-gradient(ellipse at 55% 92%, oklch(0.14 0.14 315 / 0.5) 0, transparent 55%),
+    radial-gradient(ellipse at 50% 50%, oklch(0.10 0.06 260 / 0.3) 0, transparent 70%),
+    oklch(0.07 0.018 255);
+  background-attachment: fixed;
+}
+
+body {
+  background-color: transparent;
+  color: var(--foreground);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── Glass material system ── */
+[data-slot="card"] {
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  box-shadow:
+    0 0 0 1px oklch(1 0 0 / 0.3),
+    inset 0 1px 0 oklch(1 0 0 / 0.5),
+    0 4px 24px oklch(0.3 0.1 255 / 0.08);
+}
+
+html.dark [data-slot="card"] {
+  box-shadow:
+    0 0 0 1px oklch(1 0 0 / 0.08),
+    inset 0 1px 0 oklch(1 0 0 / 0.06),
+    0 4px 24px oklch(0 0 0 / 0.35);
+}
+
+[data-slot="dialog-content"] {
+  backdrop-filter: blur(40px) saturate(200%);
+  -webkit-backdrop-filter: blur(40px) saturate(200%);
+  border-radius: 1.5rem !important;
+  box-shadow:
+    0 0 0 1px oklch(1 0 0 / 0.25),
+    inset 0 1px 0 oklch(1 0 0 / 0.4),
+    0 24px 64px oklch(0.3 0.1 255 / 0.18);
+}
+
+html.dark [data-slot="dialog-content"] {
+  box-shadow:
+    0 0 0 1px oklch(1 0 0 / 0.08),
+    inset 0 1px 0 oklch(1 0 0 / 0.05),
+    0 24px 64px oklch(0 0 0 / 0.55);
+}
+
+[data-slot="select-content"],
+[data-slot="dropdown-menu-content"] {
+  backdrop-filter: blur(20px) saturate(160%);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  border-radius: 1rem !important;
+}
+
+*, *::before, *::after {
+  border-color: var(--border);
+}

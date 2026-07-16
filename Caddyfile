@@ -1,0 +1,36 @@
+# ── 純 IP + 自簽憑證(公網 IP,無網域)──────────────────
+# 用 IP 連線時瀏覽器不送 SNI,Caddy 需要 default_sni 指定要拿哪張憑證。
+# 部署時把「兩個地方」的 127.0.0.1 換成你的伺服器公網 IP:
+#   1. 下面 default_sni 那行
+#   2. 站台位址那行(https://... 清單)
+# 例如公網 IP 是 203.0.113.5:
+#   default_sni 203.0.113.5
+#   https://localhost, https://203.0.113.5 { ... }
+{
+	default_sni 127.0.0.1
+}
+
+# 瀏覽器第一次會跳「不信任」警告,點「繼續前往」即可;
+# 或把 Caddy 根憑證匯入信任清單(容器內 /data/caddy/pki/authorities/local/root.crt)。
+https://localhost, https://127.0.0.1 {
+	tls internal
+	handle /mcp* {
+		reverse_proxy mcp:8000
+	}
+	handle {
+		reverse_proxy app:8080
+	}
+}
+
+# ── 升級選項:之後若申請了網域(含 DuckDNS 免費網域)──────
+# 換成下面這段,Caddy 會自動申請 Let's Encrypt 可信任憑證、
+# 瀏覽器零警告,並自動把 HTTP 轉址到 HTTPS。
+#
+# your-name.duckdns.org {
+#     handle /mcp* {
+#         reverse_proxy mcp:8000
+#     }
+#     handle {
+#         reverse_proxy app:8080
+#     }
+# }
