@@ -253,6 +253,7 @@ def get_row(project_id: int, row_id: int, ctx: Context) -> str:
         "llm_results": [
             {
                 "slot": lr["slot"],
+                "name": lr.get("name", f"LLM {lr['slot']}"),
                 "relevance": lr.get("relevance"),
                 "labels": _parse(lr.get("labels")),
                 "subtypes": _parse(lr.get("subtypes")),

@@ -48,7 +48,10 @@ function LLMComparison({ results, onAdopt }: { results: LLMResult[]; onAdopt: (r
                 : 'bg-muted/50'
             }`}>
               <div className="flex items-start gap-3">
-                <span className="shrink-0 font-medium text-muted-foreground w-12">LLM {r.slot}</span>
+                <span className="shrink-0 truncate font-medium text-muted-foreground min-w-12 max-w-32"
+                  title={`結果槽 ${r.slot}：${r.name || `LLM ${r.slot}`}`}>
+                  {r.name || `LLM ${r.slot}`}
+                </span>
                 <span className={`shrink-0 font-semibold w-10 ${
                   r.relevance === '相關' ? 'text-emerald-600 dark:text-emerald-400' :
                   r.relevance === '無關' ? 'text-red-500 dark:text-red-400' : 'text-muted-foreground'

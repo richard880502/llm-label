@@ -77,6 +77,7 @@ def init_db() -> None:
         "ALTER TABLE tasks ADD COLUMN claimed_by TEXT DEFAULT ''",
         "ALTER TABLE tasks ADD COLUMN last_activity_at TEXT",
         "ALTER TABLE tasks ADD COLUMN failed INTEGER DEFAULT 0",
+        "ALTER TABLE row_llm_results ADD COLUMN source_name TEXT DEFAULT ''",
     ]:
         try:
             conn.execute(ddl)
@@ -156,6 +157,7 @@ def init_db() -> None:
             id         INTEGER PRIMARY KEY AUTOINCREMENT,
             row_id     INTEGER NOT NULL REFERENCES rows(id) ON DELETE CASCADE,
             slot       INTEGER NOT NULL,
+            source_name TEXT   DEFAULT '',
             relevance  TEXT,
             labels     TEXT    DEFAULT '[]',
             subtypes   TEXT    DEFAULT '[]',

@@ -69,6 +69,18 @@ def _task_payload(conn, task_id: int) -> dict:
     return dict(row) if row else {}
 
 
+def _result_source_name(task) -> str:
+    """Return the human-facing executor name stored with each result snapshot."""
+    executor_name = (task["executor_name"] or "").strip()
+    if task["execution_mode"] == "mcp":
+        if executor_name == "claude":
+            return "Claude Code MCP"
+        if executor_name == "codex":
+            return "Codex MCP"
+        return f"{executor_name} MCP" if executor_name else "MCP"
+    return executor_name or f"LLM {task['slot'] or 1}"
+
+
 @router.get("/{project_id}/tasks")
 def list_tasks(project_id: int, _: CurrentUser = Depends(get_current_user)):
     conn = get_db()
@@ -309,11 +321,12 @@ def submit_labeling_batch(
             )
         labels = json.dumps(result.labels, ensure_ascii=False)
         subtypes = json.dumps(result.emotional_subtypes, ensure_ascii=False)
+        source_name = _result_source_name(task)
         conn.execute(
             """INSERT OR REPLACE INTO row_llm_results
-               (row_id, slot, relevance, labels, subtypes, reason, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))""",
-            (result.row_id, task["slot"] or 1, result.relevance, labels, subtypes, result.reason),
+               (row_id, slot, source_name, relevance, labels, subtypes, reason, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))""",
+            (result.row_id, task["slot"] or 1, source_name, result.relevance, labels, subtypes, result.reason),
         )
         if (task["slot"] or 1) == 1:
             conn.execute(

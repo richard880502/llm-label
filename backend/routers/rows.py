@@ -111,7 +111,36 @@ def get_row(project_id: int, row_id: int):
         raise HTTPException(404, "Row not found")
     result = dict(row)
     llm_results = conn.execute(
-        "SELECT slot, relevance, labels, subtypes, reason, updated_at FROM row_llm_results WHERE row_id=? ORDER BY slot",
+        """SELECT rlr.slot,
+                  COALESCE(
+                      NULLIF(rlr.source_name, ''),
+                      (SELECT CASE
+                                  WHEN t.execution_mode = 'mcp' AND t.executor_name = 'claude' THEN 'Claude Code MCP'
+                                  WHEN t.execution_mode = 'mcp' AND t.executor_name = 'codex' THEN 'Codex MCP'
+                                  WHEN t.execution_mode = 'mcp' AND t.executor_name != '' THEN t.executor_name || ' MCP'
+                                  ELSE NULLIF(t.executor_name, '')
+                              END
+                         FROM task_items ti
+                         JOIN tasks t ON t.id = ti.task_id
+                        WHERE ti.row_id = rlr.row_id
+                          AND COALESCE(t.slot, 1) = rlr.slot
+                          AND ti.status = 'done'
+                        ORDER BY ti.completed_at DESC, t.id DESC
+                        LIMIT 1),
+                      CASE
+                          WHEN NULLIF(cfg.name, '') IS NOT NULL AND cfg.name != 'LLM ' || rlr.slot
+                              THEN cfg.name
+                          ELSE COALESCE(NULLIF(cfg.model, ''), NULLIF(cfg.name, ''))
+                      END,
+                      'LLM ' || rlr.slot
+                  ) AS name,
+                  rlr.relevance, rlr.labels, rlr.subtypes, rlr.reason, rlr.updated_at
+             FROM row_llm_results rlr
+             JOIN rows result_row ON result_row.id = rlr.row_id
+             LEFT JOIN llm_configs cfg
+                    ON cfg.project_id = result_row.project_id AND cfg.slot = rlr.slot
+            WHERE rlr.row_id=?
+            ORDER BY rlr.slot""",
         (row_id,),
     ).fetchall()
     result["llm_results"] = [dict(r) for r in llm_results]

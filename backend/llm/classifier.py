@@ -123,6 +123,12 @@ async def run_classification_task(
         concurrency = max(1, int(cfg.get("concurrency") or 1))
         api_url = cfg.get("api_url", "")
         model = cfg.get("model", "")
+        configured_name = (cfg.get("name") or "").strip()
+        source_name = (
+            configured_name
+            if configured_name and configured_name != f"LLM {slot}"
+            else model or configured_name or f"LLM {slot}"
+        )
         api_key = cfg.get("api_key", "")
         prompt_template = cfg.get("prompt_template", "")
         try:
@@ -193,9 +199,9 @@ async def run_classification_task(
             async with db_lock:
                 conn.execute(
                     """INSERT OR REPLACE INTO row_llm_results
-                       (row_id, slot, relevance, labels, subtypes, reason, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))""",
-                    (row["id"], slot, result["ai_relevance"], result["ai_labels"],
+                       (row_id, slot, source_name, relevance, labels, subtypes, reason, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))""",
+                    (row["id"], slot, source_name, result["ai_relevance"], result["ai_labels"],
                      result["ai_emotional_subtypes"], result["ai_reason"]),
                 )
                 # slot 1 also updates the primary ai_* columns for backward compat

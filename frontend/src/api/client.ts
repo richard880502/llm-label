@@ -52,7 +52,7 @@ export interface RowSummary {
 }
 
 export interface LLMResult {
-  slot: number; relevance: string | null; labels: string; subtypes: string; reason: string; updated_at: string
+  slot: number; name: string; relevance: string | null; labels: string; subtypes: string; reason: string; updated_at: string
 }
 
 export interface LLMSlotConfig {
