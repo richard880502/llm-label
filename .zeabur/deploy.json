@@ -1,0 +1,9 @@
+{
+  "method": "local",
+  "projectId": "6a5833313eacdd312fafab59",
+  "serviceId": "6a5847f27bb410eb8cb370d6",
+  "environmentId": "6a58333144c8b660147bdcdc",
+  "environment": "production",
+  "serviceName": "llm-label",
+  "domain": "llm-judge.zeabur.app"
+}

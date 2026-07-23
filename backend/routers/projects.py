@@ -219,9 +219,17 @@ def list_llm_configs(project_id: int, _: CurrentUser = Depends(get_current_user)
                 old = json.loads(proj["llm_config"])
                 if old.get("api_url") or old.get("model"):
                     conn.execute(
-                        """INSERT OR REPLACE INTO llm_configs
+                        """INSERT INTO llm_configs
                            (project_id, slot, name, api_url, api_key, model, prompt_template, examples_mode, examples_per_label)
-                           VALUES (?, 1, 'LLM 1', ?, ?, ?, ?, ?, ?)""",
+                           VALUES (?, 1, 'LLM 1', ?, ?, ?, ?, ?, ?)
+                           ON CONFLICT (project_id, slot) DO UPDATE SET
+                               name=EXCLUDED.name,
+                               api_url=EXCLUDED.api_url,
+                               api_key=EXCLUDED.api_key,
+                               model=EXCLUDED.model,
+                               prompt_template=EXCLUDED.prompt_template,
+                               examples_mode=EXCLUDED.examples_mode,
+                               examples_per_label=EXCLUDED.examples_per_label""",
                         (project_id, old.get("api_url", ""), old.get("api_key", ""),
                          old.get("model", ""), old.get("prompt_template", ""),
                          old.get("examples_mode", "corrected_only"), old.get("examples_per_label", 3)),
@@ -275,9 +283,19 @@ def set_llm_config_slot(project_id: int, slot: int, body: LLMSlotUpdate, _: Curr
     ).fetchone()
     resolved_key = _resolve_api_key(body.api_key, existing["api_key"] if existing else "")
     conn.execute(
-        """INSERT OR REPLACE INTO llm_configs
+        """INSERT INTO llm_configs
            (project_id, slot, name, api_url, api_key, model, prompt_template, examples_mode, examples_per_label, concurrency, extra_body)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT (project_id, slot) DO UPDATE SET
+               name=EXCLUDED.name,
+               api_url=EXCLUDED.api_url,
+               api_key=EXCLUDED.api_key,
+               model=EXCLUDED.model,
+               prompt_template=EXCLUDED.prompt_template,
+               examples_mode=EXCLUDED.examples_mode,
+               examples_per_label=EXCLUDED.examples_per_label,
+               concurrency=EXCLUDED.concurrency,
+               extra_body=EXCLUDED.extra_body""",
         (project_id, slot, body.name or f"LLM {slot}",
          body.api_url, resolved_key, body.model,
          body.prompt_template, body.examples_mode, body.examples_per_label, max(1, body.concurrency),

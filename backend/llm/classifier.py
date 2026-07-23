@@ -1,8 +1,8 @@
 import asyncio
 import json
 import re
-import sqlite3
 
+from ..database import DatabaseConnection, DatabaseRow, get_db
 from .client import call_llm
 from .example_selector import select_examples
 from .prompt_builder import build_prompt
@@ -76,7 +76,7 @@ def parse_response(text: str) -> dict:
         }
 
 
-def _load_slot_config(conn: sqlite3.Connection, project_id: int, slot: int) -> dict | None:
+def _load_slot_config(conn: DatabaseConnection, project_id: int, slot: int) -> dict | None:
     row = conn.execute(
         "SELECT * FROM llm_configs WHERE project_id=? AND slot=?", (project_id, slot)
     ).fetchone()
@@ -98,12 +98,9 @@ async def run_classification_task(
     task_id: int,
     project_id: int,
     target: str,
-    db_path: str,
     slot: int,
 ) -> None:
-    conn = sqlite3.connect(db_path, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
+    conn = get_db()
 
     try:
         if task_id in _cancelled_tasks:
@@ -163,7 +160,7 @@ async def run_classification_task(
         semaphore = asyncio.Semaphore(concurrency)
         loop = asyncio.get_event_loop()
 
-        async def process_row(row: sqlite3.Row) -> None:
+        async def process_row(row: DatabaseRow) -> None:
             nonlocal processed_count
             if task_id in _cancelled_tasks:
                 return
@@ -198,9 +195,16 @@ async def run_classification_task(
 
             async with db_lock:
                 conn.execute(
-                    """INSERT OR REPLACE INTO row_llm_results
+                    """INSERT INTO row_llm_results
                        (row_id, slot, source_name, relevance, labels, subtypes, reason, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))""",
+                       VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
+                       ON CONFLICT (row_id, slot) DO UPDATE SET
+                           source_name=EXCLUDED.source_name,
+                           relevance=EXCLUDED.relevance,
+                           labels=EXCLUDED.labels,
+                           subtypes=EXCLUDED.subtypes,
+                           reason=EXCLUDED.reason,
+                           updated_at=EXCLUDED.updated_at""",
                     (row["id"], slot, source_name, result["ai_relevance"], result["ai_labels"],
                      result["ai_emotional_subtypes"], result["ai_reason"]),
                 )
@@ -223,7 +227,7 @@ async def run_classification_task(
                 conn.execute("UPDATE tasks SET processed=? WHERE id=?", (processed_count, task_id))
                 conn.commit()
 
-        async def process_with_semaphore(row: sqlite3.Row) -> None:
+        async def process_with_semaphore(row: DatabaseRow) -> None:
             async with semaphore:
                 await process_row(row)
 

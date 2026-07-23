@@ -1,8 +1,8 @@
 import json
-import sqlite3
+from typing import Any
 
 
-def select_examples(conn: sqlite3.Connection, project_id: int, llm_config: dict) -> list[dict]:
+def select_examples(conn: Any, project_id: int, llm_config: dict) -> list[dict]:
     mode = llm_config.get("examples_mode", "corrected_only")
     per_label = int(llm_config.get("examples_per_label", 3))
 

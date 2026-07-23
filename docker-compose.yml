@@ -1,20 +1,41 @@
+name: annotation-app
+
 services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: annotation
+      POSTGRES_USER: annotation
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-annotation-local-password}
+      TZ: Asia/Taipei
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - annotation_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U annotation -d annotation"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
   app:
     build: .
-    image: annotation-app:0.1.0
-    # 只綁 localhost：本機可除錯，但不直接對公網開放，
-    # 對外流量一律走 caddy 的 HTTPS。
+    image: annotation-app:0.2.0
     ports:
       - "127.0.0.1:8080:8080"
-    volumes:
-      - ./data:/app/data
-      - ./static:/app/static
     environment:
-      - SECRET_KEY=change-this-to-a-long-random-string
-      - ADMIN_USERNAME=admin
-      - ADMIN_PASSWORD=admin
-      - GOOGLE_CLIENT_ID=
-      - TZ=Asia/Taipei
+      DATABASE_URL: postgresql://annotation:${POSTGRES_PASSWORD:-annotation-local-password}@db:5432/annotation
+      SECRET_KEY: ${SECRET_KEY:-change-this-to-a-long-random-string}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      TZ: Asia/Taipei
+    volumes:
+      - ./data:/app/legacy-data:ro
+    depends_on:
+      db:
+        condition: service_healthy
     restart: unless-stopped
 
   caddy:
@@ -27,7 +48,7 @@ services:
       - caddy_data:/data
       - caddy_config:/config
     environment:
-      - TZ=Asia/Taipei
+      TZ: Asia/Taipei
     depends_on:
       - app
       - mcp
@@ -37,24 +58,27 @@ services:
     build: ./mcp_server
     image: annotation-mcp:0.2.0
     environment:
-      - ANNOTATION_API_URL=http://app:8080
-      - MCP_TRANSPORT=streamable-http
-      - MCP_HOST=0.0.0.0
-      - MCP_PORT=8000
-      - TZ=Asia/Taipei
+      ANNOTATION_API_URL: http://app:8080
+      MCP_TRANSPORT: streamable-http
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: 8000
+      TZ: Asia/Taipei
     depends_on:
       - app
     restart: unless-stopped
 
-  datasette:
-    image: datasetteproject/datasette
+  adminer:
+    image: adminer:4
     ports:
-      - "127.0.0.1:8081:8001"
-    volumes:
-      - ./data:/mnt/data
-    command: datasette /mnt/data/annotation.db --host 0.0.0.0 --port 8001 --setting sql_time_limit_ms 5000 --setting max_returned_rows 5000
+      - "127.0.0.1:8081:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: db
+    depends_on:
+      db:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:
+  annotation_db:
   caddy_data:
   caddy_config:

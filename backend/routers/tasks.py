@@ -7,7 +7,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from ..auth import CurrentUser, get_current_user
-from ..database import DB_PATH, get_db
+from ..database import get_db
 from ..llm.classifier import ALLOWED_LABELS, ALLOWED_SUBTYPES, mark_task_cancelled
 from ..llm.example_selector import select_examples
 from ..llm.prompt_builder import DEFAULT_TEMPLATE, build_prompt
@@ -323,9 +323,16 @@ def submit_labeling_batch(
         subtypes = json.dumps(result.emotional_subtypes, ensure_ascii=False)
         source_name = _result_source_name(task)
         conn.execute(
-            """INSERT OR REPLACE INTO row_llm_results
+            """INSERT INTO row_llm_results
                (row_id, slot, source_name, relevance, labels, subtypes, reason, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
+               ON CONFLICT (row_id, slot) DO UPDATE SET
+                   source_name=EXCLUDED.source_name,
+                   relevance=EXCLUDED.relevance,
+                   labels=EXCLUDED.labels,
+                   subtypes=EXCLUDED.subtypes,
+                   reason=EXCLUDED.reason,
+                   updated_at=EXCLUDED.updated_at""",
             (result.row_id, task["slot"] or 1, source_name, result.relevance, labels, subtypes, result.reason),
         )
         if (task["slot"] or 1) == 1:
@@ -434,7 +441,6 @@ def _run_sync(task_id: int, project_id: int, target: str, slot: int) -> None:
             task_id=task_id,
             project_id=project_id,
             target=target,
-            db_path=str(DB_PATH),
             slot=slot,
         )
     )
