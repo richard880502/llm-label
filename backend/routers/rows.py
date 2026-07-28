@@ -9,13 +9,15 @@ from ..database import get_db
 
 router = APIRouter()
 
+VALID_ROW_STATUSES = ("pending", "approved", "corrected", "uncertain")
+
 
 class RowUpdate(BaseModel):
     corrected_relevance: Optional[str] = None
     corrected_labels: Optional[list[str]] = None
     corrected_emotional_subtypes: Optional[list[str]] = None
     reviewer_note: Optional[str] = None
-    status: Optional[str] = None  # pending | approved | corrected
+    status: Optional[str] = None  # pending | approved | corrected | uncertain
     version: Optional[int] = None  # optimistic locking
 
 
@@ -26,7 +28,7 @@ class BatchUpdate(BaseModel):
     relevance_filter: Optional[str] = None
     q_filter: Optional[str] = None
     disagreement_filter: Optional[str] = None
-    status: str  # pending | approved | corrected
+    status: str  # pending | approved | corrected | uncertain
 
 
 @router.get("/{project_id}/rows")
@@ -165,21 +167,96 @@ def adjacent_rows(project_id: int, row_id: int, status: Optional[str] = None, re
         like = f"%{q}%"
         params += [like, like]
     where = " AND ".join(conditions)
-    ids = [r[0] for r in conn.execute(
-        f"SELECT id FROM rows WHERE {where} ORDER BY source_row_number ASC", params
-    ).fetchall()]
 
+    current = conn.execute(
+        f"SELECT id, source_row_number FROM rows WHERE id = ? AND {where}",
+        [row_id] + params,
+    ).fetchone()
+    if not current:
+        total = conn.execute(f"SELECT COUNT(*) FROM rows WHERE {where}", params).fetchone()[0]
+        conn.close()
+        return {"prev_id": None, "next_id": None, "position": None, "total": total}
+
+    cursor = [current["source_row_number"], current["id"]]
+    total = conn.execute(f"SELECT COUNT(*) FROM rows WHERE {where}", params).fetchone()[0]
+    position = conn.execute(
+        f"SELECT COUNT(*) FROM rows WHERE {where} AND (source_row_number, id) <= (?, ?)",
+        params + cursor,
+    ).fetchone()[0]
+    prev_row = conn.execute(
+        f"""SELECT id FROM rows WHERE {where} AND (source_row_number, id) < (?, ?)
+            ORDER BY source_row_number DESC, id DESC LIMIT 1""",
+        params + cursor,
+    ).fetchone()
+    next_row = conn.execute(
+        f"""SELECT id FROM rows WHERE {where} AND (source_row_number, id) > (?, ?)
+            ORDER BY source_row_number ASC, id ASC LIMIT 1""",
+        params + cursor,
+    ).fetchone()
     conn.close()
-    try:
-        idx = ids.index(row_id)
-    except ValueError:
-        return {"prev_id": None, "next_id": None, "position": None, "total": len(ids)}
     return {
-        "prev_id": ids[idx - 1] if idx > 0 else None,
-        "next_id": ids[idx + 1] if idx < len(ids) - 1 else None,
-        "position": idx + 1,
-        "total": len(ids),
+        "prev_id": prev_row["id"] if prev_row else None,
+        "next_id": next_row["id"] if next_row else None,
+        "position": position,
+        "total": total,
     }
+
+
+@router.patch("/{project_id}/rows/batch")
+def batch_update_rows(
+    project_id: int,
+    body: BatchUpdate,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    if body.status not in VALID_ROW_STATUSES:
+        raise HTTPException(400, "Invalid request")
+    conn = get_db()
+    user_row = conn.execute(
+        "SELECT id FROM users WHERE username=?", (current_user.username,)
+    ).fetchone()
+    reviewer_id = user_row["id"] if user_row else None
+
+    if body.select_all:
+        conditions = ["project_id = ?"]
+        params: list = [project_id]
+        if body.status_filter and body.status_filter != "all":
+            conditions.append("status = ?")
+            params.append(body.status_filter)
+        if body.relevance_filter and body.relevance_filter != "all":
+            conditions.append("(corrected_relevance = ? OR (corrected_relevance IS NULL AND ai_relevance = ?))")
+            params += [body.relevance_filter, body.relevance_filter]
+        if body.q_filter:
+            conditions.append("(comment_content LIKE ? OR content LIKE ?)")
+            like = f"%{body.q_filter}%"
+            params += [like, like]
+        if body.disagreement_filter == "only":
+            conditions.append(
+                "(SELECT COUNT(DISTINCT rlr.relevance) FROM row_llm_results rlr"
+                " WHERE rlr.row_id = rows.id AND rlr.relevance IS NOT NULL) > 1"
+            )
+        where = " AND ".join(conditions)
+        row_ids = [r[0] for r in conn.execute(f"SELECT id FROM rows WHERE {where}", params).fetchall()]
+    else:
+        row_ids = body.ids or []
+
+    if not row_ids:
+        conn.close()
+        return {"updated": 0}
+
+    placeholders = ",".join("?" * len(row_ids))
+    cursor = conn.execute(
+        f"UPDATE rows SET status=?, reviewer_id=?, reviewed_at=datetime('now','localtime'), version=COALESCE(version,0)+1 "
+        f"WHERE id IN ({placeholders}) AND project_id=?",
+        [body.status, reviewer_id] + row_ids + [project_id],
+    )
+    conn.executemany(
+        "INSERT INTO audit_log (project_id, row_id, username, status) VALUES (?, ?, ?, ?)",
+        [(project_id, rid, current_user.username, body.status) for rid in row_ids],
+    )
+    conn.commit()
+    updated = cursor.rowcount
+    conn.close()
+    return {"updated": updated}
 
 
 @router.patch("/{project_id}/rows/{row_id}")
@@ -189,6 +266,9 @@ def update_row(
     body: RowUpdate,
     current_user: CurrentUser = Depends(get_current_user),
 ):
+    if body.status is not None and body.status not in VALID_ROW_STATUSES:
+        raise HTTPException(400, "Invalid request")
+
     conn = get_db()
     row = conn.execute(
         "SELECT * FROM rows WHERE id=? AND project_id=?", (row_id, project_id)
@@ -245,64 +325,6 @@ def update_row(
     updated = conn.execute("SELECT * FROM rows WHERE id=?", (row_id,)).fetchone()
     conn.close()
     return dict(updated)
-
-
-@router.patch("/{project_id}/rows/batch")
-def batch_update_rows(
-    project_id: int,
-    body: BatchUpdate,
-    current_user: CurrentUser = Depends(get_current_user),
-):
-    if body.status not in ("pending", "approved", "corrected"):
-        raise HTTPException(400, "Invalid request")
-    conn = get_db()
-    user_row = conn.execute(
-        "SELECT id FROM users WHERE username=?", (current_user.username,)
-    ).fetchone()
-    reviewer_id = user_row["id"] if user_row else None
-
-    if body.select_all:
-        conditions = ["project_id = ?"]
-        params: list = [project_id]
-        if body.status_filter and body.status_filter != "all":
-            conditions.append("status = ?")
-            params.append(body.status_filter)
-        if body.relevance_filter and body.relevance_filter != "all":
-            conditions.append("(corrected_relevance = ? OR (corrected_relevance IS NULL AND ai_relevance = ?))")
-            params += [body.relevance_filter, body.relevance_filter]
-        if body.q_filter:
-            conditions.append("(comment_content LIKE ? OR content LIKE ?)")
-            like = f"%{body.q_filter}%"
-            params += [like, like]
-        if body.disagreement_filter == "only":
-            conditions.append(
-                "(SELECT COUNT(DISTINCT rlr.relevance) FROM row_llm_results rlr"
-                " WHERE rlr.row_id = rows.id AND rlr.relevance IS NOT NULL) > 1"
-            )
-        where = " AND ".join(conditions)
-        row_ids = [r[0] for r in conn.execute(f"SELECT id FROM rows WHERE {where}", params).fetchall()]
-    else:
-        row_ids = body.ids or []
-
-    if not row_ids:
-        conn.close()
-        return {"updated": 0}
-
-    placeholders = ",".join("?" * len(row_ids))
-    cursor = conn.execute(
-        f"UPDATE rows SET status=?, reviewer_id=?, reviewed_at=datetime('now','localtime'), version=COALESCE(version,0)+1 "
-        f"WHERE id IN ({placeholders}) AND project_id=?",
-        [body.status, reviewer_id] + row_ids + [project_id],
-    )
-    for rid in row_ids:
-        conn.execute(
-            "INSERT INTO audit_log (project_id, row_id, username, status) VALUES (?, ?, ?, ?)",
-            (project_id, rid, current_user.username, body.status),
-        )
-    conn.commit()
-    updated = cursor.rowcount
-    conn.close()
-    return {"updated": updated}
 
 
 @router.get("/{project_id}/rows/{row_id}/audit")

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { api, RowDetail, Adjacent, LLMResult, AuditEntry, PresenceEntry } from '../api/client'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { api, RowDetail, Adjacent, LLMResult, AuditEntry } from '../api/client'
 import { useAuth } from '../context/AuthContext'
 import HeaderUserMenu from '../components/HeaderUserMenu'
 import { Button } from '@/components/ui/button'
@@ -125,6 +126,7 @@ export default function ReviewPage() {
     page: searchParams.get('page') || '1',
   }
 
+  const queryClient = useQueryClient()
   const [row, setRow] = useState<RowDetail | null>(null)
   const [adj, setAdj] = useState<Adjacent | null>(null)
   const [loading, setLoading] = useState(true)
@@ -134,9 +136,24 @@ export default function ReviewPage() {
   const { user } = useAuth()
   const versionRef = useRef<number>(0)
   const [auditLog, setAuditLog] = useState<AuditEntry[]>([])
-  const [presence, setPresence] = useState<PresenceEntry[]>([])
   const [conflictWarning, setConflictWarning] = useState<string | null>(null)
-  const [undoData, setUndoData] = useState<{ rowId: number; rowNum: number; prevStatus: string } | null>(null)
+
+  const invalidateListCaches = () => {
+    queryClient.invalidateQueries({ queryKey: ['rows', pid] })
+    queryClient.invalidateQueries({ queryKey: ['project', pid] })
+  }
+
+  const { data: presence = [] } = useQuery({
+    queryKey: ['presence', pid],
+    queryFn: () => api.getPresence(pid),
+    refetchInterval: 5000,
+  })
+  const [undoData, setUndoData] = useState<{
+    rowId: number
+    rowNum: number
+    prevStatus: string
+    savedStatus: 'approved' | 'uncertain'
+  } | null>(null)
   const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [helpOpen, setHelpOpen] = useState(false)
   const [relevance, setRelevance] = useState('相關')
@@ -146,7 +163,14 @@ export default function ReviewPage() {
 
   const loadRow = useCallback(async (id: number) => {
     setLoading(true)
-    const [r, a, audit] = await Promise.all([api.getRow(pid, id), api.getAdjacent(pid, id, filterParams), api.getAuditLog(pid, id)])
+    const [r, a, audit] = await Promise.all([
+      queryClient.fetchQuery({ queryKey: ['row', pid, id], queryFn: () => api.getRow(pid, id), staleTime: 15000 }),
+      queryClient.fetchQuery({
+        queryKey: ['adjacent', pid, id, filterParams.status, filterParams.relevance, filterParams.q],
+        queryFn: () => api.getAdjacent(pid, id, filterParams), staleTime: 15000,
+      }),
+      queryClient.fetchQuery({ queryKey: ['audit', pid, id], queryFn: () => api.getAuditLog(pid, id), staleTime: 15000 }),
+    ])
     setRow(r); setAdj(a); setAuditLog(audit)
     versionRef.current = r.version ?? 0
     setConflictWarning(null)
@@ -155,7 +179,7 @@ export default function ReviewPage() {
     setSubtypes(parseList(r.corrected_emotional_subtypes || r.ai_emotional_subtypes))
     setNote(r.reviewer_note || '')
     setLoading(false)
-  }, [pid, filterParams.status, filterParams.relevance, filterParams.q])
+  }, [pid, filterParams.status, filterParams.relevance, filterParams.q, queryClient])
 
   useEffect(() => { loadRow(rid) }, [rid])
 
@@ -178,27 +202,36 @@ export default function ReviewPage() {
     setSaving(true); setSaveError(null)
     try {
       await api.updateRow(pid, rid, { corrected_relevance: relevance, corrected_labels: labels, corrected_emotional_subtypes: subtypes, reviewer_note: note, status, version: versionRef.current })
-      if (status === 'approved') {
+      invalidateListCaches()
+      queryClient.invalidateQueries({ queryKey: ['row', pid, rid] })
+      if (status === 'approved' || status === 'uncertain') {
         if (undoTimerRef.current) clearTimeout(undoTimerRef.current)
-        setUndoData({ rowId: rid, rowNum: row.source_row_number - 1, prevStatus: row.status })
+        setUndoData({
+          rowId: rid,
+          rowNum: row.source_row_number - 1,
+          prevStatus: row.status,
+          savedStatus: status,
+        })
         undoTimerRef.current = setTimeout(() => setUndoData(null), 5000)
         goNext()
       } else {
         setSavedOk(true); setTimeout(() => setSavedOk(false), 1500)
         const updated = await api.getRow(pid, rid); setRow(updated)
+        queryClient.setQueryData(['row', pid, rid], updated)
       }
     } catch (err) {
       if ((err as any).status === 409) {
         const latest = await api.getRow(pid, rid)
         const latestAudit = await api.getAuditLog(pid, rid)
         setRow(latest); setAuditLog(latestAudit)
+        queryClient.setQueryData(['row', pid, rid], latest)
         versionRef.current = latest.version ?? 0
         setConflictWarning(`此筆剛被 ${latest.reviewer_username || '他人'} 修改，已更新為最新版本，請確認後再存`)
       } else {
         setSaveError(err instanceof Error ? err.message : '儲存失敗，請重試')
       }
     } finally { setSaving(false) }
-  }, [row, pid, rid, relevance, labels, subtypes, note, goNext])
+  }, [row, pid, rid, relevance, labels, subtypes, note, goNext, queryClient])
 
   const handleUndo = useCallback(async () => {
     if (!undoData) return
@@ -206,8 +239,10 @@ export default function ReviewPage() {
     const { rowId, prevStatus } = undoData
     setUndoData(null)
     await api.updateRow(pid, rowId, { status: prevStatus || 'pending' })
+    invalidateListCaches()
+    queryClient.invalidateQueries({ queryKey: ['row', pid, rowId] })
     navigate(`/projects/${pid}/review/${rowId}?${new URLSearchParams(filterParams).toString()}`)
-  }, [undoData, pid, navigate, filterParams])
+  }, [undoData, pid, navigate, filterParams, queryClient])
 
   useEffect(() => () => { if (undoTimerRef.current) clearTimeout(undoTimerRef.current) }, [])
 
@@ -218,19 +253,13 @@ export default function ReviewPage() {
   }, [pid, rid])
 
   useEffect(() => {
-    const poll = () => api.getPresence(pid).then(setPresence).catch(() => {})
-    poll()
-    const timer = setInterval(poll, 5000)
-    return () => clearInterval(timer)
-  }, [pid])
-
-  useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement) return
       if (e.key === 'ArrowRight' || e.key === ']') goNext()
       if (e.key === 'ArrowLeft' || e.key === '[') goPrev()
       if (e.key === 'a') save('approved')
       if (e.key === 's') save('corrected')
+      if (e.key === 'u') save('uncertain')
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
@@ -243,6 +272,7 @@ export default function ReviewPage() {
     pending:   { label: '待審',   cls: 'bg-muted text-muted-foreground' },
     approved:  { label: '已核准', cls: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' },
     corrected: { label: '已修正', cls: 'bg-primary/10 text-primary' },
+    uncertain: { label: '未確定', cls: 'bg-orange-500/20 text-orange-700 ring-1 ring-inset ring-orange-500/25 dark:bg-orange-500/20 dark:text-orange-300' },
   }
 
   const othersOnRow = presence.filter(p => p.row_id === rid && p.username !== user?.username)
@@ -262,7 +292,10 @@ export default function ReviewPage() {
       )}
       {undoData && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 bg-foreground/90 backdrop-blur-sm text-background px-5 py-3 rounded-full shadow-xl text-sm">
-          <span>✓ 第 {undoData.rowNum} 筆已核准</span>
+          <span>
+            {undoData.savedStatus === 'approved' ? '✓' : '?'} 第 {undoData.rowNum} 筆
+            已標記為{undoData.savedStatus === 'approved' ? '核准' : '未確定'}
+          </span>
           <div className="w-px h-4 bg-background/30" />
           <button onClick={handleUndo} className="font-semibold hover:opacity-70 transition-opacity">撤銷</button>
         </div>
@@ -422,14 +455,27 @@ export default function ReviewPage() {
                   <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">審查歷史</p>
                   <div className="space-y-1.5">
                     {auditLog.map(entry => {
-                      const statusLabel: Record<string, string> = { approved: '核准', corrected: '修正', pending: '還原待審' }
+                      const statusLabel: Record<string, string> = {
+                        approved: '核准',
+                        corrected: '修正',
+                        uncertain: '標記未確定',
+                        pending: '還原待審',
+                      }
                       const parsedLabels: string[] = entry.labels ? (() => { try { return JSON.parse(entry.labels) } catch { return [] } })() : []
                       return (
                         <div key={entry.id} className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
                           <span className="font-medium text-foreground">{entry.username}</span>
                           <span className="text-muted-foreground/60">{entry.changed_at.slice(0, 16).replace('T', ' ')}</span>
                           {entry.status && (
-                            <span className={`font-medium ${entry.status === 'approved' ? 'text-emerald-600 dark:text-emerald-400' : entry.status === 'corrected' ? 'text-primary' : 'text-muted-foreground'}`}>
+                            <span className={`font-medium ${
+                              entry.status === 'approved'
+                                ? 'text-emerald-600 dark:text-emerald-400'
+                                : entry.status === 'corrected'
+                                  ? 'text-primary'
+                                  : entry.status === 'uncertain'
+                                    ? 'text-orange-600 dark:text-orange-400'
+                                    : 'text-muted-foreground'
+                            }`}>
                               {statusLabel[entry.status] ?? entry.status}
                             </span>
                           )}
@@ -462,8 +508,12 @@ export default function ReviewPage() {
               className="flex-1 h-12 text-base rounded-xl">
               ✎ 儲存修正 <span className="text-primary-foreground/50 text-xs ml-1">[S]</span>
             </Button>
+            <Button onClick={() => save('uncertain')} disabled={saving}
+              className="flex-1 h-12 text-base rounded-xl bg-orange-500 text-white hover:bg-orange-600 dark:bg-orange-500 dark:hover:bg-orange-600 shadow-sm">
+              ? 未確定 <span className="text-orange-100 text-xs ml-1">[U]</span>
+            </Button>
           </div>
-          <p className="text-center text-xs text-muted-foreground">快捷鍵：← → 切換筆數　A 核准　S 儲存修正</p>
+          <p className="text-center text-xs text-muted-foreground">快捷鍵：← → 切換筆數　A 核准　S 儲存修正　U 未確定</p>
         </main>
       )}
 
@@ -478,6 +528,7 @@ export default function ReviewPage() {
               ['→  /  ]', '下一筆'],
               ['A', '核准'],
               ['S', '儲存修正'],
+              ['U', '標記為未確定'],
             ] as [string, string][]).map(([key, desc]) => (
               <div key={key} className="flex items-center justify-between py-2 border-b border-border last:border-0">
                 <kbd className="font-mono text-xs bg-muted px-2 py-1 rounded">{key}</kbd>

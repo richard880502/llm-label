@@ -36,7 +36,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export interface Project {
   id: number; name: string; filename: string; created_at: string
-  total_rows: number; approved: number; corrected: number; pending: number
+  total_rows: number; approved: number; corrected: number; uncertain: number; pending: number
 }
 
 export interface RowSummary {
@@ -44,7 +44,7 @@ export interface RowSummary {
   ai_relevance: string; ai_labels: string; ai_emotional_subtypes: string
   corrected_relevance: string | null; corrected_labels: string | null
   corrected_emotional_subtypes: string | null
-  status: 'pending' | 'approved' | 'corrected'; reviewed_at: string | null
+  status: 'pending' | 'approved' | 'corrected' | 'uncertain'; reviewed_at: string | null
   llm_updated_at: string | null
   llm_disagreement: number
   llm_parse_failed: number

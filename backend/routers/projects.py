@@ -86,6 +86,7 @@ def list_projects(_: CurrentUser = Depends(get_current_user)):
                COUNT(r.id) as total,
                SUM(CASE WHEN r.status = 'approved'  THEN 1 ELSE 0 END) as approved,
                SUM(CASE WHEN r.status = 'corrected' THEN 1 ELSE 0 END) as corrected,
+               SUM(CASE WHEN r.status = 'uncertain' THEN 1 ELSE 0 END) as uncertain,
                SUM(CASE WHEN r.status = 'pending'   THEN 1 ELSE 0 END) as pending
         FROM projects p
         LEFT JOIN rows r ON r.project_id = p.id
@@ -465,16 +466,16 @@ def adopt_slot(project_id: int, body: AdoptSlotBody, _: CurrentUser = Depends(ge
             WHERE rlr.slot = ? AND r.project_id = ? {extra}""",
         (body.slot, project_id),
     ).fetchall()
-    updated = 0
-    for r in results:
-        conn.execute(
+    params = [(r["relevance"], r["labels"], r["subtypes"], r["row_id"]) for r in results]
+    if params:
+        conn.executemany(
             """UPDATE rows SET
                corrected_relevance=?, corrected_labels=?, corrected_emotional_subtypes=?,
                status='corrected', reviewed_at=datetime('now','localtime')
                WHERE id=?""",
-            (r["relevance"], r["labels"], r["subtypes"], r["row_id"]),
+            params,
         )
-        updated += 1
+    updated = len(params)
     conn.commit()
     conn.close()
     return {"updated": updated}
@@ -496,6 +497,7 @@ def get_project(project_id: int, _: CurrentUser = Depends(get_current_user)):
         SELECT p.*,
                SUM(CASE WHEN r.status = 'approved'  THEN 1 ELSE 0 END) as approved,
                SUM(CASE WHEN r.status = 'corrected' THEN 1 ELSE 0 END) as corrected,
+               SUM(CASE WHEN r.status = 'uncertain' THEN 1 ELSE 0 END) as uncertain,
                SUM(CASE WHEN r.status = 'pending'   THEN 1 ELSE 0 END) as pending
         FROM projects p
         LEFT JOIN rows r ON r.project_id = p.id

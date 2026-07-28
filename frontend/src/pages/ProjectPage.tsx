@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { api, LLMSlotConfig, Project, RowSummary, PresenceEntry, Task } from '../api/client'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { api, LLMSlotConfig } from '../api/client'
 import HeaderUserMenu from '../components/HeaderUserMenu'
 import LLMSettingsModal from '../components/LLMSettingsModal'
 import { Button } from '@/components/ui/button'
@@ -15,6 +16,7 @@ const STATUS_LABELS: Record<string, { label: string; cls: string }> = {
   pending:   { label: '待審',   cls: 'bg-muted text-muted-foreground' },
   approved:  { label: '已核准', cls: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' },
   corrected: { label: '已修正', cls: 'bg-primary/10 text-primary' },
+  uncertain: { label: '未確定', cls: 'bg-orange-500/20 text-orange-700 ring-1 ring-inset ring-orange-500/25 dark:bg-orange-500/20 dark:text-orange-300' },
 }
 
 function Highlight({ text, query }: { text: string; query: string }) {
@@ -49,7 +51,9 @@ function BulkAdoptModal({ projectId, adoptOpen, setAdoptOpen, onDone }: {
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<number | null>(null)
 
-  useEffect(() => { api.getLLMConfigs(projectId).then(setSlots) }, [projectId])
+  useEffect(() => {
+    api.getLLMConfigs(projectId).then(setSlots).catch(() => {})
+  }, [projectId])
   useEffect(() => { if (!adoptOpen) setTimeout(() => setResult(null), 200) }, [adoptOpen])
 
   const handleApply = async () => {
@@ -155,14 +159,18 @@ export default function ProjectPage() {
     })
   }
 
-  const [presence, setPresence] = useState<PresenceEntry[]>([])
+  const queryClient = useQueryClient()
 
-  useEffect(() => {
-    const poll = () => api.getPresence(pid).then(setPresence).catch(() => {})
-    poll()
-    const timer = setInterval(poll, 5000)
-    return () => clearInterval(timer)
-  }, [pid])
+  const { data: presence = [] } = useQuery({
+    queryKey: ['presence', pid],
+    queryFn: () => api.getPresence(pid),
+    refetchInterval: 5000,
+  })
+
+  const invalidateProjectData = () => {
+    queryClient.invalidateQueries({ queryKey: ['rows', pid] })
+    queryClient.invalidateQueries({ queryKey: ['project', pid] })
+  }
 
   function userColor(username: string) {
     const colors = ['#3b82f6','#8b5cf6','#10b981','#f97316','#ec4899','#14b8a6','#f59e0b','#f43f5e']
@@ -171,38 +179,32 @@ export default function ProjectPage() {
   }
 
   const [llmOpen, setLlmOpen] = useState(false)
-  const [activeTasks, setActiveTasks] = useState<Task[]>([])
   const [adoptOpen, setAdoptOpen] = useState(false)
-  const [refreshKey, setRefreshKey] = useState(0)
-  const [project, setProject] = useState<Project | null>(null)
-  const [rows, setRows] = useState<RowSummary[]>([])
-  const [total, setTotal] = useState(0)
   const [qInput, setQInput] = useState(q)
-  const [loading, setLoading] = useState(true)
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [selectAllRows, setSelectAllRows] = useState(false)
   const [batchSaving, setBatchSaving] = useState(false)
   const selectAllRef = useRef<HTMLInputElement>(null)
   const PAGE_SIZE = 50
 
-  const loadActiveTasks = () => api.listTasks(pid).then(tasks => {
-    setActiveTasks(tasks.filter(t => ['pending', 'waiting_for_agent', 'running'].includes(t.status)))
-  }).catch(() => {})
+  const { data: tasks = [], refetch: refetchTasks } = useQuery({
+    queryKey: ['tasks', pid],
+    queryFn: () => api.listTasks(pid),
+    refetchInterval: 4000,
+  })
+  const activeTasks = tasks.filter(t => ['pending', 'waiting_for_agent', 'running'].includes(t.status))
 
-  useEffect(() => {
-    loadActiveTasks()
-    const timer = setInterval(loadActiveTasks, 4000)
-    return () => clearInterval(timer)
-  }, [pid])
+  const { data: project } = useQuery({
+    queryKey: ['project', pid],
+    queryFn: () => api.getProject(pid),
+  })
 
-  useEffect(() => { api.getProject(pid).then(setProject) }, [pid, refreshKey])
-
-  useEffect(() => {
-    setLoading(true)
-    api.listRows(pid, { page, page_size: PAGE_SIZE, status, relevance, q, disagreement })
-      .then(r => { setRows(r.items); setTotal(r.total) })
-      .finally(() => setLoading(false))
-  }, [pid, page, status, relevance, q, disagreement, refreshKey])
+  const { data: rowsData, isLoading: loading } = useQuery({
+    queryKey: ['rows', pid, page, status, relevance, q, disagreement],
+    queryFn: () => api.listRows(pid, { page, page_size: PAGE_SIZE, status, relevance, q, disagreement }),
+  })
+  const rows = rowsData?.items ?? []
+  const total = rowsData?.total ?? 0
 
   useEffect(() => { setSelectedIds(new Set()) }, [rows])
 
@@ -237,7 +239,7 @@ export default function ProjectPage() {
       }
       setSelectedIds(new Set())
       setSelectAllRows(false)
-      setRefreshKey(k => k + 1)
+      invalidateProjectData()
     } catch (e) {
       alert(e instanceof Error ? e.message : '批次操作失敗')
     } finally {
@@ -261,6 +263,7 @@ export default function ProjectPage() {
             <div className="hidden sm:flex items-center gap-3 text-xs text-muted-foreground shrink-0 mr-1">
               <span className="text-emerald-600 dark:text-emerald-400 font-medium">✓ {project.approved || 0}</span>
               <span className="text-primary font-medium">✎ {project.corrected || 0}</span>
+              <span className="text-orange-600 dark:text-orange-400 font-semibold">? {project.uncertain || 0}</span>
               <span>⏳ {project.pending ?? project.total_rows}</span>
               <span className="text-border">·</span>
               <span>{project.total_rows} 筆</span>
@@ -292,6 +295,8 @@ export default function ProjectPage() {
                 style={{ width: `${(project.approved || 0) / project.total_rows * 100}%` }} />
               <div className="h-full bg-primary transition-all duration-700"
                 style={{ width: `${(project.corrected || 0) / project.total_rows * 100}%` }} />
+              <div className="h-full bg-orange-500 transition-all duration-700"
+                style={{ width: `${(project.uncertain || 0) / project.total_rows * 100}%` }} />
             </div>
           </div>
         )}
@@ -303,7 +308,7 @@ export default function ProjectPage() {
           <Select value={status} onValueChange={val => setFilter('status', val ?? 'all')}>
             <SelectTrigger className="w-28">
               <SelectValue placeholder="狀態">
-                {({'all':'所有狀態','pending':'待審','approved':'已核准','corrected':'已修正'} as Record<string,string>)[status]}
+                {({'all':'所有狀態','pending':'待審','approved':'已核准','corrected':'已修正','uncertain':'未確定'} as Record<string,string>)[status]}
               </SelectValue>
             </SelectTrigger>
             <SelectContent>
@@ -311,6 +316,7 @@ export default function ProjectPage() {
               <SelectItem value="pending">待審</SelectItem>
               <SelectItem value="approved">已核准</SelectItem>
               <SelectItem value="corrected">已修正</SelectItem>
+              <SelectItem value="uncertain">未確定</SelectItem>
             </SelectContent>
           </Select>
 
@@ -472,9 +478,9 @@ export default function ProjectPage() {
         )}
       </main>
 
-      <LLMSettingsModal projectId={pid} open={llmOpen} onClose={() => setLlmOpen(false)} onTasksChanged={loadActiveTasks} />
+      <LLMSettingsModal projectId={pid} open={llmOpen} onClose={() => setLlmOpen(false)} onTasksChanged={() => refetchTasks()} />
       <BulkAdoptModal projectId={pid} adoptOpen={adoptOpen} setAdoptOpen={setAdoptOpen}
-        onDone={() => setRefreshKey(k => k + 1)} />
+        onDone={invalidateProjectData} />
 
       {selectedIds.size > 0 && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 bg-foreground/90 backdrop-blur-sm text-background px-5 py-3 rounded-full shadow-xl text-sm">

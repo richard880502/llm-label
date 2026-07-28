@@ -310,6 +310,11 @@ def submit_labeling_batch(
         conn.close()
         raise HTTPException(409, "部分資料不屬於此批次，或租約已過期")
 
+    slot = task["slot"] or 1
+    source_name = _result_source_name(task)
+    llm_result_params = []
+    rows_update_params = []
+    task_item_params = []
     for result in body.results:
         unknown_labels = set(result.labels) - ALLOWED_LABELS
         unknown_subtypes = set(result.emotional_subtypes) - ALLOWED_SUBTYPES
@@ -321,36 +326,44 @@ def submit_labeling_batch(
             )
         labels = json.dumps(result.labels, ensure_ascii=False)
         subtypes = json.dumps(result.emotional_subtypes, ensure_ascii=False)
-        source_name = _result_source_name(task)
-        conn.execute(
-            """INSERT INTO row_llm_results
-               (row_id, slot, source_name, relevance, labels, subtypes, reason, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
-               ON CONFLICT (row_id, slot) DO UPDATE SET
-                   source_name=EXCLUDED.source_name,
-                   relevance=EXCLUDED.relevance,
-                   labels=EXCLUDED.labels,
-                   subtypes=EXCLUDED.subtypes,
-                   reason=EXCLUDED.reason,
-                   updated_at=EXCLUDED.updated_at""",
-            (result.row_id, task["slot"] or 1, source_name, result.relevance, labels, subtypes, result.reason),
+        llm_result_params.append(
+            (result.row_id, slot, source_name, result.relevance, labels, subtypes, result.reason)
         )
-        if (task["slot"] or 1) == 1:
-            conn.execute(
-                """UPDATE rows SET ai_relevance=?, ai_labels=?, ai_emotional_subtypes=?, ai_reason=?,
-                   llm_updated_at=datetime('now', 'localtime') WHERE id=?""",
-                (result.relevance, labels, subtypes, result.reason, result.row_id),
-            )
+        if slot == 1:
+            rows_update_params.append((result.relevance, labels, subtypes, result.reason, result.row_id))
         else:
-            conn.execute(
-                "UPDATE rows SET llm_updated_at=datetime('now', 'localtime') WHERE id=?",
-                (result.row_id,),
-            )
-        conn.execute(
-            """UPDATE task_items SET status='done', completed_at=datetime('now', 'localtime'),
-               lease_token=NULL, lease_expires_at=NULL WHERE task_id=? AND row_id=?""",
-            (task_id, result.row_id),
+            rows_update_params.append((result.row_id,))
+        task_item_params.append((task_id, result.row_id))
+
+    conn.executemany(
+        """INSERT INTO row_llm_results
+           (row_id, slot, source_name, relevance, labels, subtypes, reason, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
+           ON CONFLICT (row_id, slot) DO UPDATE SET
+               source_name=EXCLUDED.source_name,
+               relevance=EXCLUDED.relevance,
+               labels=EXCLUDED.labels,
+               subtypes=EXCLUDED.subtypes,
+               reason=EXCLUDED.reason,
+               updated_at=EXCLUDED.updated_at""",
+        llm_result_params,
+    )
+    if slot == 1:
+        conn.executemany(
+            """UPDATE rows SET ai_relevance=?, ai_labels=?, ai_emotional_subtypes=?, ai_reason=?,
+               llm_updated_at=datetime('now', 'localtime') WHERE id=?""",
+            rows_update_params,
         )
+    else:
+        conn.executemany(
+            "UPDATE rows SET llm_updated_at=datetime('now', 'localtime') WHERE id=?",
+            rows_update_params,
+        )
+    conn.executemany(
+        """UPDATE task_items SET status='done', completed_at=datetime('now', 'localtime'),
+           lease_token=NULL, lease_expires_at=NULL WHERE task_id=? AND row_id=?""",
+        task_item_params,
+    )
 
     processed = conn.execute(
         "SELECT COUNT(*) AS count FROM task_items WHERE task_id=? AND status='done'",

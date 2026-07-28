@@ -6,18 +6,24 @@ def select_examples(conn: Any, project_id: int, llm_config: dict) -> list[dict]:
     mode = llm_config.get("examples_mode", "corrected_only")
     per_label = int(llm_config.get("examples_per_label", 3))
 
+    # 挑選範例只需要最近的一批候選即可湊出每個標籤的 per_label 數量，
+    # 不需要整個專案的歷史資料；用 LIMIT 避免大型專案把全部資料載入記憶體。
+    candidate_limit = 1000
     if mode == "corrected_only":
         candidates = conn.execute("""
             SELECT * FROM rows
             WHERE project_id=? AND corrected_relevance IS NOT NULL
+              AND status IN ('approved', 'corrected')
             ORDER BY reviewed_at DESC
-        """, (project_id,)).fetchall()
+            LIMIT ?
+        """, (project_id, candidate_limit)).fetchall()
     else:
         candidates = conn.execute("""
             SELECT * FROM rows
             WHERE project_id=? AND status IN ('approved', 'corrected')
             ORDER BY reviewed_at DESC
-        """, (project_id,)).fetchall()
+            LIMIT ?
+        """, (project_id, candidate_limit)).fetchall()
 
     if not candidates:
         return []

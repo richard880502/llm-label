@@ -123,11 +123,14 @@ export default function HomePage() {
                       <span className="text-muted-foreground">共 <strong className="text-foreground font-semibold">{proj.total_rows}</strong> 筆</span>
                       <span className="text-emerald-600 dark:text-emerald-400 font-medium">✓ 核准 {proj.approved || 0}</span>
                       <span className="text-primary font-medium">✎ 修正 {proj.corrected || 0}</span>
+                      <span className="text-orange-600 dark:text-orange-400 font-semibold">? 未確定 {proj.uncertain || 0}</span>
                       <span className="text-muted-foreground">⏳ 待審 {proj.pending ?? proj.total_rows}</span>
                     </div>
                     <div className="h-1.5 bg-black/10 dark:bg-white/15 rounded-full overflow-hidden flex">
                       <div className="bg-emerald-500 h-full transition-all duration-500" style={{ width: `${pctApproved}%` }} />
                       <div className="bg-primary h-full transition-all duration-500" style={{ width: `${pctCorrected}%` }} />
+                      <div className="bg-orange-500 h-full transition-all duration-500"
+                        style={{ width: `${((proj.uncertain || 0) / total) * 100}%` }} />
                     </div>
                     <p className="text-xs text-muted-foreground mt-1.5">{reviewed} / {proj.total_rows} 已審查 ({pctTotal}%)</p>
                   </CardContent>
