@@ -40,6 +40,7 @@ def list_rows(
     relevance: Optional[str] = None,
     q: Optional[str] = None,
     disagreement: Optional[str] = None,
+    include_total: bool = True,
 ):
     conn = get_db()
     conditions = ["r.project_id = ?"]
@@ -73,7 +74,11 @@ def list_rows(
                    ) THEN 1 ELSE 0 END"""
     order = f"{disagreement_expr} DESC, r.source_row_number ASC" if disagreement == "first" else "r.source_row_number ASC"
 
-    total = conn.execute(f"SELECT COUNT(*) FROM rows r WHERE {where}", params).fetchone()[0]
+    total = (
+        conn.execute(f"SELECT COUNT(*) FROM rows r WHERE {where}", params).fetchone()[0]
+        if include_total
+        else None
+    )
     offset = (page - 1) * page_size
     rows_db = conn.execute(
         f"""SELECT r.id, r.source_row_number, r.comment_content, r.content,
@@ -151,7 +156,14 @@ def get_row(project_id: int, row_id: int):
 
 
 @router.get("/{project_id}/rows/{row_id}/adjacent")
-def adjacent_rows(project_id: int, row_id: int, status: Optional[str] = None, relevance: Optional[str] = None, q: Optional[str] = None):
+def adjacent_rows(
+    project_id: int,
+    row_id: int,
+    status: Optional[str] = None,
+    relevance: Optional[str] = None,
+    q: Optional[str] = None,
+    include_total: bool = True,
+):
     """Return prev_id and next_id relative to row_id, respecting current filters."""
     conn = get_db()
     conditions = ["project_id = ?"]
@@ -173,12 +185,20 @@ def adjacent_rows(project_id: int, row_id: int, status: Optional[str] = None, re
         [row_id] + params,
     ).fetchone()
     if not current:
-        total = conn.execute(f"SELECT COUNT(*) FROM rows WHERE {where}", params).fetchone()[0]
+        total = (
+            conn.execute(f"SELECT COUNT(*) FROM rows WHERE {where}", params).fetchone()[0]
+            if include_total
+            else None
+        )
         conn.close()
         return {"prev_id": None, "next_id": None, "position": None, "total": total}
 
     cursor = [current["source_row_number"], current["id"]]
-    total = conn.execute(f"SELECT COUNT(*) FROM rows WHERE {where}", params).fetchone()[0]
+    total = (
+        conn.execute(f"SELECT COUNT(*) FROM rows WHERE {where}", params).fetchone()[0]
+        if include_total
+        else None
+    )
     position = conn.execute(
         f"SELECT COUNT(*) FROM rows WHERE {where} AND (source_row_number, id) <= (?, ?)",
         params + cursor,

@@ -167,7 +167,10 @@ export default function ProjectPage() {
     refetchInterval: 5000,
   })
 
+  const totalCacheRef = useRef<{ sig: string; total: number } | null>(null)
+
   const invalidateProjectData = () => {
+    totalCacheRef.current = null
     queryClient.invalidateQueries({ queryKey: ['rows', pid] })
     queryClient.invalidateQueries({ queryKey: ['project', pid] })
   }
@@ -199,9 +202,18 @@ export default function ProjectPage() {
     queryFn: () => api.getProject(pid),
   })
 
+  const filterSignature = `${status}|${relevance}|${q}|${disagreement}`
+
   const { data: rowsData, isLoading: loading } = useQuery({
     queryKey: ['rows', pid, page, status, relevance, q, disagreement],
-    queryFn: () => api.listRows(pid, { page, page_size: PAGE_SIZE, status, relevance, q, disagreement }),
+    queryFn: async () => {
+      const needsTotal = totalCacheRef.current?.sig !== filterSignature
+      const res = await api.listRows(pid, {
+        page, page_size: PAGE_SIZE, status, relevance, q, disagreement, include_total: needsTotal,
+      })
+      if (res.total !== null) totalCacheRef.current = { sig: filterSignature, total: res.total }
+      return { ...res, total: res.total ?? totalCacheRef.current?.total ?? 0 }
+    },
   })
   const rows = rowsData?.items ?? []
   const total = rowsData?.total ?? 0

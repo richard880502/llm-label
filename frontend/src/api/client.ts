@@ -72,11 +72,11 @@ export interface RowDetail extends RowSummary {
 }
 
 export interface RowsResponse {
-  total: number; page: number; page_size: number; items: RowSummary[]
+  total: number | null; page: number; page_size: number; items: RowSummary[]
 }
 
 export interface Adjacent {
-  prev_id: number | null; next_id: number | null; position: number; total: number
+  prev_id: number | null; next_id: number | null; position: number | null; total: number | null
 }
 
 export interface RowUpdate {
@@ -217,14 +217,14 @@ export const api = {
     return request<Project>('/projects', { method: 'POST', body: fd })
   },
   deleteProject: (id: number) => request(`/projects/${id}`, { method: 'DELETE' }),
-  listRows: (projectId: number, params: Record<string, string | number>) => {
+  listRows: (projectId: number, params: Record<string, string | number | boolean>) => {
     const qs = new URLSearchParams(Object.entries(params).map(([k, v]) => [k, String(v)])).toString()
     return request<RowsResponse>(`/projects/${projectId}/rows?${qs}`)
   },
   getRow: (projectId: number, rowId: number) =>
     request<RowDetail>(`/projects/${projectId}/rows/${rowId}`),
-  getAdjacent: (projectId: number, rowId: number, params: Record<string, string>) => {
-    const qs = new URLSearchParams(params).toString()
+  getAdjacent: (projectId: number, rowId: number, params: Record<string, string | boolean>) => {
+    const qs = new URLSearchParams(Object.entries(params).map(([k, v]) => [k, String(v)])).toString()
     return request<Adjacent>(`/projects/${projectId}/rows/${rowId}/adjacent?${qs}`)
   },
   updateRow: (projectId: number, rowId: number, body: RowUpdate) =>

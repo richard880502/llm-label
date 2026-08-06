@@ -138,7 +138,10 @@ export default function ReviewPage() {
   const [auditLog, setAuditLog] = useState<AuditEntry[]>([])
   const [conflictWarning, setConflictWarning] = useState<string | null>(null)
 
+  const adjTotalCacheRef = useRef<{ sig: string; total: number } | null>(null)
+
   const invalidateListCaches = () => {
+    adjTotalCacheRef.current = null
     queryClient.invalidateQueries({ queryKey: ['rows', pid] })
     queryClient.invalidateQueries({ queryKey: ['project', pid] })
   }
@@ -163,11 +166,18 @@ export default function ReviewPage() {
 
   const loadRow = useCallback(async (id: number) => {
     setLoading(true)
+    const adjFilterSig = `${filterParams.status}|${filterParams.relevance}|${filterParams.q}`
     const [r, a, audit] = await Promise.all([
       queryClient.fetchQuery({ queryKey: ['row', pid, id], queryFn: () => api.getRow(pid, id), staleTime: 15000 }),
       queryClient.fetchQuery({
         queryKey: ['adjacent', pid, id, filterParams.status, filterParams.relevance, filterParams.q],
-        queryFn: () => api.getAdjacent(pid, id, filterParams), staleTime: 15000,
+        queryFn: async () => {
+          const needsTotal = adjTotalCacheRef.current?.sig !== adjFilterSig
+          const res = await api.getAdjacent(pid, id, { ...filterParams, include_total: needsTotal })
+          if (res.total !== null) adjTotalCacheRef.current = { sig: adjFilterSig, total: res.total }
+          return { ...res, total: res.total ?? adjTotalCacheRef.current?.total ?? 0 }
+        },
+        staleTime: 15000,
       }),
       queryClient.fetchQuery({ queryKey: ['audit', pid, id], queryFn: () => api.getAuditLog(pid, id), staleTime: 15000 }),
     ])
