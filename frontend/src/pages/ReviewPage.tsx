@@ -104,11 +104,20 @@ const SUBTYPES = [
   'Satisfied and Pleased', 'Excited and Proud', 'Touched and Inspired',
   'Loved and Warm', 'Accepted and Supported', 'Hopeful and Expectant',
   'Relaxed and Fun', 'Scared and Vulnerable', 'Regretful and Missing',
+  'Grateful and Heartfelt',
 ]
+const EMOTIONAL_RESONANCE = 'Emotional Resonance'
 
 function parseList(val: string | null | undefined): string[] {
   if (!val) return []
   try { return JSON.parse(val) } catch { return val.split(',').map(s => s.trim()).filter(Boolean) }
+}
+
+function normalizeEmotionalHierarchy(labels: string[], subtypes: string[]) {
+  if (subtypes.length > 0 && !labels.includes(EMOTIONAL_RESONANCE)) {
+    return { labels: [...labels, EMOTIONAL_RESONANCE], subtypes }
+  }
+  return { labels, subtypes }
 }
 
 export default function ReviewPage() {
@@ -185,8 +194,12 @@ export default function ReviewPage() {
     versionRef.current = r.version ?? 0
     setConflictWarning(null)
     setRelevance(r.corrected_relevance || r.ai_relevance || '相關')
-    setLabels(parseList(r.corrected_labels || r.ai_labels))
-    setSubtypes(parseList(r.corrected_emotional_subtypes || r.ai_emotional_subtypes))
+    const selection = normalizeEmotionalHierarchy(
+      parseList(r.corrected_labels || r.ai_labels),
+      parseList(r.corrected_emotional_subtypes || r.ai_emotional_subtypes),
+    )
+    setLabels(selection.labels)
+    setSubtypes(selection.subtypes)
     setNote(r.reviewer_note || '')
     setLoading(false)
   }, [pid, filterParams.status, filterParams.relevance, filterParams.q, queryClient])
@@ -203,8 +216,15 @@ export default function ReviewPage() {
 
   const handleAdopt = useCallback((r: LLMResult) => {
     if (r.relevance) setRelevance(r.relevance)
-    try { const l = JSON.parse(r.labels || '[]'); if (Array.isArray(l)) setLabels(l) } catch { /* ignore */ }
-    try { const s = JSON.parse(r.subtypes || '[]'); if (Array.isArray(s)) setSubtypes(s) } catch { /* ignore */ }
+    try {
+      const l = JSON.parse(r.labels || '[]')
+      const s = JSON.parse(r.subtypes || '[]')
+      if (Array.isArray(l) && Array.isArray(s)) {
+        const selection = normalizeEmotionalHierarchy(l, s)
+        setLabels(selection.labels)
+        setSubtypes(selection.subtypes)
+      }
+    } catch { /* ignore malformed LLM results */ }
   }, [])
 
   const save = useCallback(async (status: string) => {
@@ -275,8 +295,13 @@ export default function ReviewPage() {
     return () => window.removeEventListener('keydown', handler)
   }, [goNext, goPrev, save])
 
-  const toggleLabel = (l: string) => setLabels(prev => prev.includes(l) ? prev.filter(x => x !== l) : [...prev, l])
+  const toggleLabel = (l: string) => setLabels(prev => {
+    const isRemoving = prev.includes(l)
+    if (isRemoving && l === EMOTIONAL_RESONANCE) setSubtypes([])
+    return isRemoving ? prev.filter(x => x !== l) : [...prev, l]
+  })
   const toggleSubtype = (s: string) => setSubtypes(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s])
+  const canSelectSubtypes = labels.includes(EMOTIONAL_RESONANCE)
 
   const statusInfo: Record<string, { label: string; cls: string }> = {
     pending:   { label: '待審',   cls: 'bg-muted text-muted-foreground' },
@@ -423,14 +448,22 @@ export default function ReviewPage() {
               </div>
 
               <div>
-                <p className="text-sm font-medium text-foreground mb-2">情感子類型</p>
+                <div className="flex items-baseline gap-2 mb-2">
+                  <p className="text-sm font-medium text-foreground">情感子類型</p>
+                  <p className="text-xs text-muted-foreground">
+                    {canSelectSubtypes ? '可複選，描述同時出現的複合情緒' : '請先選擇 Emotional Resonance'}
+                  </p>
+                </div>
                 <div className="flex flex-wrap gap-2">
                   {SUBTYPES.map(s => (
-                    <button key={s} onClick={() => toggleSubtype(s)}
+                    <button key={s} onClick={() => toggleSubtype(s)} disabled={!canSelectSubtypes}
+                      title={canSelectSubtypes ? '選擇情感子類型' : '請先選擇 Emotional Resonance'}
                       className={`text-xs px-3 py-1.5 rounded-full border transition-all duration-150 ${
                         subtypes.includes(s)
                           ? 'bg-teal-600 text-white border-teal-600 shadow-sm'
-                          : 'bg-card text-muted-foreground border-border hover:border-teal-400 hover:text-teal-600 dark:hover:text-teal-400'
+                          : canSelectSubtypes
+                            ? 'bg-card text-muted-foreground border-border hover:border-teal-400 hover:text-teal-600 dark:hover:text-teal-400'
+                            : 'bg-muted text-muted-foreground/45 border-border cursor-not-allowed'
                       }`}>{s.split(' ')[0]}</button>
                   ))}
                 </div>

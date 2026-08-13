@@ -15,7 +15,13 @@ ALLOWED_SUBTYPES = {
     "Satisfied and Pleased", "Excited and Proud", "Touched and Inspired",
     "Loved and Warm", "Accepted and Supported", "Hopeful and Expectant",
     "Relaxed and Fun", "Scared and Vulnerable", "Regretful and Missing",
+    "Grateful and Heartfelt",
 }
+
+
+def has_valid_emotional_hierarchy(labels: list[str], subtypes: list[str]) -> bool:
+    """情緒子類型只可作為 Emotional Resonance 的子分類。"""
+    return not subtypes or "Emotional Resonance" in labels
 
 # 記錄使用者按下「停止」的任務 ID。同一個 process 內跨執行緒共用，
 # set 的 add/discard/contains 由 GIL 保證單一操作是原子的，這裡的用法足夠安全。
@@ -56,6 +62,10 @@ def parse_response(text: str) -> dict:
             relevance = "無關"
         labels = _extract_names(data.get("labels") or [], ALLOWED_LABELS)
         subtypes = _extract_names(data.get("emotional_subtypes") or [], ALLOWED_SUBTYPES)
+        # LLM 偶爾會只輸出子類型。不要把不完整階層寫入正式結果；保留其餘
+        # 可用標籤，讓審查者可在介面中補判。
+        if not has_valid_emotional_hierarchy(labels, subtypes):
+            subtypes = []
         return {
             "ai_relevance": relevance,
             "ai_labels": json.dumps(labels, ensure_ascii=False),
@@ -155,6 +165,10 @@ async def run_classification_task(
             return
 
         examples = select_examples(conn, project_id, cfg)
+        project = conn.execute(
+            "SELECT annotation_instructions FROM projects WHERE id=?", (project_id,)
+        ).fetchone()
+        project_instructions = project["annotation_instructions"] if project else ""
         processed_count = 0
         db_lock = asyncio.Lock()
         semaphore = asyncio.Semaphore(concurrency)
@@ -175,7 +189,7 @@ async def run_classification_task(
                     "fallback": False,
                 }
             else:
-                prompt = build_prompt(prompt_template, examples, comment)
+                prompt = build_prompt(prompt_template, examples, comment, project_instructions)
                 try:
                     raw = await loop.run_in_executor(
                         None,

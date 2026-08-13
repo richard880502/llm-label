@@ -8,7 +8,12 @@ from pydantic import BaseModel, Field
 
 from ..auth import CurrentUser, get_current_user
 from ..database import get_db
-from ..llm.classifier import ALLOWED_LABELS, ALLOWED_SUBTYPES, mark_task_cancelled
+from ..llm.classifier import (
+    ALLOWED_LABELS,
+    ALLOWED_SUBTYPES,
+    has_valid_emotional_hierarchy,
+    mark_task_cancelled,
+)
 from ..llm.example_selector import select_examples
 from ..llm.prompt_builder import DEFAULT_TEMPLATE, build_prompt
 
@@ -262,6 +267,10 @@ def get_labeling_batch(
 
     cfg = _mcp_config(conn, project_id, task["slot"] or 1)
     examples = select_examples(conn, project_id, cfg)
+    project = conn.execute(
+        "SELECT annotation_instructions FROM projects WHERE id=?", (project_id,)
+    ).fetchone()
+    project_instructions = project["annotation_instructions"] if project else ""
     prompt_template = cfg.get("prompt_template") or DEFAULT_TEMPLATE
     rows = [
         {
@@ -270,7 +279,12 @@ def get_labeling_batch(
             "content": row["content"] or "",
             "comment": row["comment_content"] or "",
             "version": row["version"] or 0,
-            "prompt": build_prompt(prompt_template, examples, row["comment_content"] or ""),
+            "prompt": build_prompt(
+                prompt_template,
+                examples,
+                row["comment_content"] or "",
+                project_instructions,
+            ),
         }
         for row in items
     ]
@@ -323,6 +337,12 @@ def submit_labeling_batch(
             raise HTTPException(
                 400,
                 f"row {result.row_id} 含不允許的標籤：{sorted(unknown_labels | unknown_subtypes)}",
+            )
+        if not has_valid_emotional_hierarchy(result.labels, result.emotional_subtypes):
+            conn.close()
+            raise HTTPException(
+                400,
+                f"row {result.row_id} 的情緒子類型必須同時標記 Emotional Resonance",
             )
         labels = json.dumps(result.labels, ensure_ascii=False)
         subtypes = json.dumps(result.emotional_subtypes, ensure_ascii=False)

@@ -205,6 +205,10 @@ class LLMSlotUpdate(BaseModel):
     extra_body: str = ""  # 進階：合併進 request body 的額外 JSON 參數（例如關閉 thinking mode）
 
 
+class AnnotationInstructionsUpdate(BaseModel):
+    annotation_instructions: str = ""
+
+
 @router.get("/{project_id}/llm-configs")
 def list_llm_configs(project_id: int, _: CurrentUser = Depends(get_current_user)):
     from ..llm.prompt_builder import DEFAULT_TEMPLATE
@@ -353,17 +357,49 @@ def preview_slot_prompt(project_id: int, slot: int, _: CurrentUser = Depends(get
         raise HTTPException(404, "此 slot 尚未設定")
     cfg = dict(row)
     examples = select_examples(conn, project_id, cfg)
+    project = conn.execute(
+        "SELECT annotation_instructions FROM projects WHERE id=?", (project_id,)
+    ).fetchone()
     conn.close()
     sample = "這個活動辦得很好，謝謝主辦單位的用心！"
-    prompt = build_prompt(cfg.get("prompt_template", ""), examples, sample)
+    prompt = build_prompt(
+        cfg.get("prompt_template", ""),
+        examples,
+        sample,
+        project["annotation_instructions"] if project else "",
+    )
     return {"example_count": len(examples), "prompt": prompt}
+
+
+@router.patch("/{project_id}/annotation-instructions")
+def update_annotation_instructions(
+    project_id: int,
+    body: AnnotationInstructionsUpdate,
+    _: CurrentUser = Depends(get_current_user),
+):
+    instructions = body.annotation_instructions.strip()
+    if len(instructions) > 12000:
+        raise HTTPException(400, "Codebook 最多可輸入 12,000 個字元")
+    conn = get_db()
+    updated = conn.execute(
+        "UPDATE projects SET annotation_instructions=? WHERE id=?",
+        (instructions, project_id),
+    )
+    if updated.rowcount == 0:
+        conn.close()
+        raise HTTPException(404, "Project not found")
+    conn.commit()
+    conn.close()
+    return {"annotation_instructions": instructions}
 
 
 @router.get("/{project_id}/llm-config")
 def get_llm_config(project_id: int, _: CurrentUser = Depends(get_current_user)):
     from ..llm.prompt_builder import DEFAULT_TEMPLATE
     conn = get_db()
-    proj = conn.execute("SELECT llm_config FROM projects WHERE id=?", (project_id,)).fetchone()
+    proj = conn.execute(
+        "SELECT llm_config, annotation_instructions FROM projects WHERE id=?", (project_id,)
+    ).fetchone()
     conn.close()
     if not proj:
         raise HTTPException(404, "Project not found")
@@ -412,7 +448,9 @@ def preview_prompt(project_id: int, _: CurrentUser = Depends(get_current_user)):
     from ..llm.example_selector import select_examples
     from ..llm.prompt_builder import build_prompt
     conn = get_db()
-    proj = conn.execute("SELECT llm_config FROM projects WHERE id=?", (project_id,)).fetchone()
+    proj = conn.execute(
+        "SELECT llm_config, annotation_instructions FROM projects WHERE id=?", (project_id,)
+    ).fetchone()
     if not proj:
         conn.close()
         raise HTTPException(404, "Project not found")
@@ -423,9 +461,12 @@ def preview_prompt(project_id: int, _: CurrentUser = Depends(get_current_user)):
         except Exception:
             pass
     examples = select_examples(conn, project_id, cfg)
+    project_instructions = proj["annotation_instructions"] or ""
     conn.close()
     sample_comment = "這個活動辦得很好，謝謝主辦單位的用心！"
-    prompt = build_prompt(cfg.get("prompt_template", ""), examples, sample_comment)
+    prompt = build_prompt(
+        cfg.get("prompt_template", ""), examples, sample_comment, project_instructions
+    )
     return {"example_count": len(examples), "prompt": prompt}
 
 

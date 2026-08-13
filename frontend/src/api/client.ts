@@ -37,6 +37,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export interface Project {
   id: number; name: string; filename: string; created_at: string
   total_rows: number; approved: number; corrected: number; uncertain: number; pending: number
+  annotation_instructions: string
 }
 
 export interface RowSummary {
@@ -212,6 +213,11 @@ export const api = {
   // projects
   listProjects: () => request<Project[]>('/projects'),
   getProject: (id: number) => request<Project>(`/projects/${id}`),
+  updateAnnotationInstructions: (id: number, annotation_instructions: string) =>
+    request<{ annotation_instructions: string }>(`/projects/${id}/annotation-instructions`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ annotation_instructions }),
+    }),
   createProject: (name: string, file: File) => {
     const fd = new FormData(); fd.append('name', name); fd.append('file', file)
     return request<Project>('/projects', { method: 'POST', body: fd })

@@ -54,6 +54,12 @@ DEFAULT_TEMPLATE = """你是一個嚴格依照人工 codebook 執行的留言標
 排除：若只是「你好厲害」較偏 Words of Affirmation；若重點是想採用對方方法，較偏 Mirroring。
 
 【Emotional Resonance subtypes】
+情緒子類型是 Emotional Resonance 的下一層分類，兩者不可分開使用：
+- 只有先標記 Emotional Resonance，才可以標記任何情緒子類型。
+- 若有任何情緒子類型，labels 必須同時包含 Emotional Resonance。
+- 單有 Emotional Resonance 時可以沒有子類型；但不可只輸出子類型。
+- 每筆可選擇一個以上的子類型，保留留言中明確可辨識的複合情緒。
+
 若標記 Emotional Resonance，盡量同時指出子類：
 - Satisfied and Pleased
 - Excited and Proud
@@ -64,6 +70,7 @@ DEFAULT_TEMPLATE = """你是一個嚴格依照人工 codebook 執行的留言標
 - Relaxed and Fun
 - Scared and Vulnerable
 - Regretful and Missing
+- Grateful and Heartfelt
 
 【Step 4: Other fallback】
 如果留言與貼文相關，但不符合任何上述類別，labels 輸出空陣列，reason 說明原因。
@@ -95,14 +102,30 @@ COMMENTS_CONTENT: {comment}
 {{"relevance": "無關", "labels": [], "emotional_subtypes": [], "reason": "簡短說明"}}
 
 如果相關：
-{{"relevance": "相關", "labels": ["Words of Affirmation"], "emotional_subtypes": ["Excited and Proud"], "reason": "1-2 句簡短說明"}}
+{{"relevance": "相關", "labels": ["Words of Affirmation", "Emotional Resonance"], "emotional_subtypes": ["Excited and Proud"], "reason": "1-2 句簡短說明"}}
 
 可用標籤：Words of Affirmation, Quality Time, Acts of Service, Tangible Gifts, Physical Touch, Mirroring, Emotional Resonance
-可用情感子類型：Satisfied and Pleased, Excited and Proud, Touched and Inspired, Loved and Warm, Accepted and Supported, Hopeful and Expectant, Relaxed and Fun, Scared and Vulnerable, Regretful and Missing"""
+可用情感子類型：Satisfied and Pleased, Excited and Proud, Touched and Inspired, Loved and Warm, Accepted and Supported, Hopeful and Expectant, Relaxed and Fun, Scared and Vulnerable, Regretful and Missing, Grateful and Heartfelt"""
 
 
-def build_prompt(template: str, examples: list[dict], comment: str) -> str:
+def build_prompt(
+    template: str,
+    examples: list[dict],
+    comment: str,
+    project_instructions: str = "",
+) -> str:
     tmpl = template or DEFAULT_TEMPLATE
+    instructions = project_instructions.strip()
+    if instructions:
+        instructions_block = f"【專案 Codebook／最新 Agent 指示】\n{instructions}\n【Codebook 結束】"
+        # 自訂 Prompt 可選擇將區塊放在任意位置；未放 placeholder 時仍一定會
+        # 附加，確保 API 與 MCP Agent 都會收到專案層的最新規則。
+        if "{project_instructions}" in tmpl:
+            tmpl = tmpl.replace("{project_instructions}", instructions_block)
+        else:
+            tmpl = f"{tmpl}\n\n{instructions_block}"
+    else:
+        tmpl = tmpl.replace("{project_instructions}", "")
     example_lines = []
     for ex in examples:
         relevance = ex.get("corrected_relevance") or ex.get("ai_relevance") or "無關"
