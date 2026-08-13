@@ -107,6 +107,19 @@ COMMENTS_CONTENT: {comment}
 可用標籤：Words of Affirmation, Quality Time, Acts of Service, Tangible Gifts, Physical Touch, Mirroring, Emotional Resonance
 可用情感子類型：Satisfied and Pleased, Excited and Proud, Touched and Inspired, Loved and Warm, Accepted and Supported, Hopeful and Expectant, Relaxed and Fun, Scared and Vulnerable, Regretful and Missing, Grateful and Heartfelt"""
 
+# 規則本身與 prompt 外殼分開管理：規則可覆寫為每個專案自己的 Codebook，
+# 範例、待判斷留言與 JSON 輸出要求則維持平台的一致性。
+_CODEBOOK_PREFIX = "你必須嚴格遵守以下流程與規則。\n\n"
+_CODEBOOK_SUFFIX = "\n\n---\n以下是人工複查後的正確分類範例："
+DEFAULT_PROJECT_INSTRUCTIONS = DEFAULT_TEMPLATE.split(_CODEBOOK_PREFIX, 1)[1].split(
+    _CODEBOOK_SUFFIX, 1
+)[0]
+
+
+def effective_project_instructions(project_instructions: str | None) -> str:
+    """Return the complete rules active for this project, including the default."""
+    return (project_instructions or "").strip() or DEFAULT_PROJECT_INSTRUCTIONS
+
 
 def build_prompt(
     template: str,
@@ -115,17 +128,16 @@ def build_prompt(
     project_instructions: str = "",
 ) -> str:
     tmpl = template or DEFAULT_TEMPLATE
-    instructions = project_instructions.strip()
-    if instructions:
-        instructions_block = f"【專案 Codebook／最新 Agent 指示】\n{instructions}\n【Codebook 結束】"
-        # 自訂 Prompt 可選擇將區塊放在任意位置；未放 placeholder 時仍一定會
-        # 附加，確保 API 與 MCP Agent 都會收到專案層的最新規則。
-        if "{project_instructions}" in tmpl:
-            tmpl = tmpl.replace("{project_instructions}", instructions_block)
-        else:
-            tmpl = f"{tmpl}\n\n{instructions_block}"
+    instructions = effective_project_instructions(project_instructions)
+    instructions_block = f"【專案 Codebook／目前生效規則】\n{instructions}\n【Codebook 結束】"
+    if tmpl == DEFAULT_TEMPLATE:
+        # 預設 Prompt 中直接替換 Codebook，避免重複或互相衝突的規則。
+        tmpl = tmpl.replace(DEFAULT_PROJECT_INSTRUCTIONS, instructions)
+    elif "{project_instructions}" in tmpl:
+        tmpl = tmpl.replace("{project_instructions}", instructions_block)
     else:
-        tmpl = tmpl.replace("{project_instructions}", "")
+        # 自訂 Prompt 若未留 placeholder，仍一定附上專案層的完整 Codebook。
+        tmpl = f"{tmpl}\n\n{instructions_block}"
     example_lines = []
     for ex in examples:
         relevance = ex.get("corrected_relevance") or ex.get("ai_relevance") or "無關"

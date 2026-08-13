@@ -377,6 +377,8 @@ def update_annotation_instructions(
     body: AnnotationInstructionsUpdate,
     _: CurrentUser = Depends(get_current_user),
 ):
+    from ..llm.prompt_builder import effective_project_instructions
+
     instructions = body.annotation_instructions.strip()
     if len(instructions) > 12000:
         raise HTTPException(400, "Codebook 最多可輸入 12,000 個字元")
@@ -390,7 +392,7 @@ def update_annotation_instructions(
         raise HTTPException(404, "Project not found")
     conn.commit()
     conn.close()
-    return {"annotation_instructions": instructions}
+    return {"annotation_instructions": effective_project_instructions(instructions)}
 
 
 @router.get("/{project_id}/llm-config")
@@ -533,6 +535,7 @@ def delete_project(project_id: int, _: CurrentUser = Depends(get_current_user)):
 
 @router.get("/{project_id}")
 def get_project(project_id: int, _: CurrentUser = Depends(get_current_user)):
+    from ..llm.prompt_builder import effective_project_instructions
     conn = get_db()
     proj = conn.execute("""
         SELECT p.*,
@@ -548,4 +551,9 @@ def get_project(project_id: int, _: CurrentUser = Depends(get_current_user)):
     conn.close()
     if not proj:
         raise HTTPException(404, "Project not found")
-    return dict(proj)
+    result = dict(proj)
+    # 前端始終顯示「目前生效」的完整規則；尚未自訂的舊專案則顯示預設 Codebook。
+    result["annotation_instructions"] = effective_project_instructions(
+        result.get("annotation_instructions")
+    )
+    return result

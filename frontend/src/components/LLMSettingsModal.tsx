@@ -508,13 +508,13 @@ export default function LLMSettingsModal({ projectId: pid, open, onClose, onTask
             <div>
               <p className="text-xs font-semibold uppercase tracking-wide text-teal-700 dark:text-teal-300">專案 Codebook／Agent 指示</p>
               <p className="text-sm text-muted-foreground mt-1">
-                所有平台 API 與 MCP 任務都會收到這份最新版規則，以及精選的人工作答案例。
+                這是此專案目前生效的完整規則。直接修改並儲存後，所有平台 API 與 MCP 任務都會使用此版本，以及精選的人工作答案例。
                 目前可作為 few-shot 的已修正案例：{correctedExamples} 筆。
               </p>
             </div>
             <textarea value={annotationInstructions} onChange={e => setAnnotationInstructions(e.target.value)}
-              rows={7} maxLength={12000}
-              placeholder={'例如：\n- 有情緒子類型時，必須同時標記 Emotional Resonance。\n- Grateful and Heartfelt 可與其他情緒子類型複選。\n- 遇到模糊案例時標記為未確定並說明原因。'}
+              rows={18} maxLength={12000}
+              aria-label="專案 Codebook 完整規則"
               className="w-full border border-input bg-card text-foreground placeholder:text-muted-foreground rounded-lg px-3 py-2 text-sm resize-y focus:outline-none focus:ring-2 focus:ring-teal-500/30 focus:border-teal-500" />
             <div className="flex items-center justify-between gap-3">
               <p className="text-xs text-muted-foreground">{annotationInstructions.length.toLocaleString()} / 12,000 字元</p>
