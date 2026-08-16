@@ -81,7 +81,7 @@ function LLMComparison({ results, onAdopt }: { results: LLMResult[]; onAdopt: (r
               {subtypes.length > 0 && (
                 <div className="flex flex-wrap gap-1 pl-[88px]">
                   {subtypes.map((s: string) => (
-                    <span key={s} className="px-1.5 py-0.5 rounded bg-teal-100 dark:bg-teal-900/40 text-teal-700 dark:text-teal-300">{s.split(' ')[0]}</span>
+                    <span key={s} className="px-1.5 py-0.5 rounded bg-teal-100 dark:bg-teal-900/40 text-teal-700 dark:text-teal-300">{s}</span>
                   ))}
                 </div>
               )}
@@ -104,7 +104,7 @@ const SUBTYPES = [
   'Satisfied and Pleased', 'Excited and Proud', 'Touched and Inspired',
   'Loved and Warm', 'Accepted and Supported', 'Hopeful and Expectant',
   'Relaxed and Fun', 'Scared and Vulnerable', 'Regretful and Missing',
-  'Grateful and Heartfelt',
+  'Grateful and Heartfelt', '未確定',
 ]
 const EMOTIONAL_RESONANCE = 'Emotional Resonance'
 
@@ -464,7 +464,7 @@ export default function ReviewPage() {
                           : canSelectSubtypes
                             ? 'bg-card text-muted-foreground border-border hover:border-teal-400 hover:text-teal-600 dark:hover:text-teal-400'
                             : 'bg-muted text-muted-foreground/45 border-border cursor-not-allowed'
-                      }`}>{s.split(' ')[0]}</button>
+                      }`}>{s}</button>
                   ))}
                 </div>
               </div>

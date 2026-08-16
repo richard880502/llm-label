@@ -15,7 +15,7 @@ ALLOWED_SUBTYPES = {
     "Satisfied and Pleased", "Excited and Proud", "Touched and Inspired",
     "Loved and Warm", "Accepted and Supported", "Hopeful and Expectant",
     "Relaxed and Fun", "Scared and Vulnerable", "Regretful and Missing",
-    "Grateful and Heartfelt",
+    "Grateful and Heartfelt", "未確定",
 }
 
 

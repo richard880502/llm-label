@@ -1,9 +1,25 @@
 # Annotation App
 
-**目前版本：v3.0.0**
+**目前版本：v3.1.0**
 
 多人協作的資料標注與複查平台。前端使用 React/Vite，後端使用 FastAPI，
 正式資料儲存在獨立 PostgreSQL 服務。
+
+## v3.1.0 更新重點
+
+- 新增「專案 Codebook」：每個專案可在 LLM 設定中維護自己的分類規則（上限 12,000 字），
+  未自訂時會顯示、並實際套用平台內建的完整預設規則，不再是空白或看不到目前生效內容。
+  規則會同時套用到內建 LLM 任務、MCP Agent 批次分類，以及人工複查的手動修正。
+- Emotional Resonance 與其情緒子類型的階層規則，現在在 LLM 產出、MCP 批次送出與人工修正
+  三個路徑都會一致驗證：沒有 Emotional Resonance 就不能有子類型。
+- 情感子類型新增「未確定」選項，供複查者標記「確定有情緒反應、但無法判斷具體子類型」；
+  另補上先前已上線但未寫入文件的「Grateful and Heartfelt」子類型。
+- 修正情感子類型標籤只顯示第一個英文字（如 `Satisfied`）的問題，處理頁與 LLM 比對結果
+  現在都會顯示完整子類型名稱。
+- 修正 PostgreSQL connection pool 洩漏：所有路由改用 context manager 存取資料庫連線，
+  例外發生時保證連線會歸還 pool；新增 pool/session 逾時設定與逾時時的 503 錯誤處理，
+  避免連線耗盡導致 `/api/projects` 等 API 整個失敗。
+- MCP server 依賴改為 `mcp>=1.2.0,<2.0.0`，避免升級到會移除 `FastMCP` 匯入路徑的 2.x 版本。
 
 ## v3.0.0 更新重點
 
@@ -22,6 +38,7 @@
 - 待審、已核准、已修正、未確定四種審查狀態。
 - 依狀態、相關性、LLM 歧異及關鍵字篩選。
 - 多組 LLM 結果比對、批次分類與 MCP Agent 執行模式。
+- 專案層級 Codebook：自訂並檢視目前生效的分類規則，套用到所有分類路徑。
 - 多人在線狀態、審查歷史、版本衝突偵測與使用者權限管理。
 - PostgreSQL 持久化、Adminer 管理介面及 Docker Compose 部署。
 
@@ -126,6 +143,7 @@ docker compose exec -T db \
 
 ## 版本歷程
 
+- `v3.1.0`：新增專案 Codebook、情感子類型「未確定」、完整子類型顯示，並修復 DB connection pool 洩漏。
 - `v3.0.0`：新增未確定狀態、前端查詢管理與 PostgreSQL 效能優化。
 - `v2.0.0-postgresql`：正式資料庫由 SQLite 遷移至 PostgreSQL。
 - `v1.0.0-sqlite`：最後一個使用 SQLite 的版本。
