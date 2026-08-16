@@ -21,17 +21,15 @@ def export_xlsx(project_id: int):
     if Workbook is None:
         raise HTTPException(500, "伺服器未安裝 openpyxl")
 
-    conn = get_db()
-    proj = conn.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
-    if not proj:
-        conn.close()
-        raise HTTPException(404, "Project not found")
+    with get_db() as conn:
+        proj = conn.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
+        if not proj:
+            raise HTTPException(404, "Project not found")
 
-    rows = conn.execute(
-        "SELECT * FROM rows WHERE project_id=? ORDER BY source_row_number ASC",
-        (project_id,),
-    ).fetchall()
-    conn.close()
+        rows = conn.execute(
+            "SELECT * FROM rows WHERE project_id=? ORDER BY source_row_number ASC",
+            (project_id,),
+        ).fetchall()
 
     if not rows:
         raise HTTPException(400, "No rows to export")

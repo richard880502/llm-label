@@ -43,7 +43,6 @@ def list_rows(
     disagreement: Optional[str] = None,
     include_total: bool = True,
 ):
-    conn = get_db()
     conditions = ["r.project_id = ?"]
     params: list = [project_id]
 
@@ -75,27 +74,27 @@ def list_rows(
                    ) THEN 1 ELSE 0 END"""
     order = f"{disagreement_expr} DESC, r.source_row_number ASC" if disagreement == "first" else "r.source_row_number ASC"
 
-    total = (
-        conn.execute(f"SELECT COUNT(*) FROM rows r WHERE {where}", params).fetchone()[0]
-        if include_total
-        else None
-    )
-    offset = (page - 1) * page_size
-    rows_db = conn.execute(
-        f"""SELECT r.id, r.source_row_number, r.comment_content, r.content,
-                   r.ai_relevance, r.ai_labels, r.ai_emotional_subtypes,
-                   r.corrected_relevance, r.corrected_labels, r.corrected_emotional_subtypes,
-                   r.status, r.reviewed_at, r.llm_updated_at, u.username AS reviewer_username,
-                   {disagreement_expr} AS llm_disagreement,
-                   {parse_failed_expr} AS llm_parse_failed
-            FROM rows r
-            LEFT JOIN users u ON u.id = r.reviewer_id
-            WHERE {where}
-            ORDER BY {order}
-            LIMIT ? OFFSET ?""",
-        params + [page_size, offset],
-    ).fetchall()
-    conn.close()
+    with get_db() as conn:
+        total = (
+            conn.execute(f"SELECT COUNT(*) FROM rows r WHERE {where}", params).fetchone()[0]
+            if include_total
+            else None
+        )
+        offset = (page - 1) * page_size
+        rows_db = conn.execute(
+            f"""SELECT r.id, r.source_row_number, r.comment_content, r.content,
+                       r.ai_relevance, r.ai_labels, r.ai_emotional_subtypes,
+                       r.corrected_relevance, r.corrected_labels, r.corrected_emotional_subtypes,
+                       r.status, r.reviewed_at, r.llm_updated_at, u.username AS reviewer_username,
+                       {disagreement_expr} AS llm_disagreement,
+                       {parse_failed_expr} AS llm_parse_failed
+                FROM rows r
+                LEFT JOIN users u ON u.id = r.reviewer_id
+                WHERE {where}
+                ORDER BY {order}
+                LIMIT ? OFFSET ?""",
+            params + [page_size, offset],
+        ).fetchall()
     return {
         "total": total,
         "page": page,
@@ -106,53 +105,51 @@ def list_rows(
 
 @router.get("/{project_id}/rows/{row_id}")
 def get_row(project_id: int, row_id: int):
-    conn = get_db()
-    row = conn.execute(
-        """SELECT r.*, u.username AS reviewer_username
-           FROM rows r
-           LEFT JOIN users u ON u.id = r.reviewer_id
-           WHERE r.id=? AND r.project_id=?""",
-        (row_id, project_id),
-    ).fetchone()
-    if not row:
-        conn.close()
-        raise HTTPException(404, "Row not found")
-    result = dict(row)
-    llm_results = conn.execute(
-        """SELECT rlr.slot,
-                  COALESCE(
-                      NULLIF(rlr.source_name, ''),
-                      (SELECT CASE
-                                  WHEN t.execution_mode = 'mcp' AND t.executor_name = 'claude' THEN 'Claude Code MCP'
-                                  WHEN t.execution_mode = 'mcp' AND t.executor_name = 'codex' THEN 'Codex MCP'
-                                  WHEN t.execution_mode = 'mcp' AND t.executor_name != '' THEN t.executor_name || ' MCP'
-                                  ELSE NULLIF(t.executor_name, '')
-                              END
-                         FROM task_items ti
-                         JOIN tasks t ON t.id = ti.task_id
-                        WHERE ti.row_id = rlr.row_id
-                          AND COALESCE(t.slot, 1) = rlr.slot
-                          AND ti.status = 'done'
-                        ORDER BY ti.completed_at DESC, t.id DESC
-                        LIMIT 1),
-                      CASE
-                          WHEN NULLIF(cfg.name, '') IS NOT NULL AND cfg.name != 'LLM ' || rlr.slot
-                              THEN cfg.name
-                          ELSE COALESCE(NULLIF(cfg.model, ''), NULLIF(cfg.name, ''))
-                      END,
-                      'LLM ' || rlr.slot
-                  ) AS name,
-                  rlr.relevance, rlr.labels, rlr.subtypes, rlr.reason, rlr.updated_at
-             FROM row_llm_results rlr
-             JOIN rows result_row ON result_row.id = rlr.row_id
-             LEFT JOIN llm_configs cfg
-                    ON cfg.project_id = result_row.project_id AND cfg.slot = rlr.slot
-            WHERE rlr.row_id=?
-            ORDER BY rlr.slot""",
-        (row_id,),
-    ).fetchall()
-    result["llm_results"] = [dict(r) for r in llm_results]
-    conn.close()
+    with get_db() as conn:
+        row = conn.execute(
+            """SELECT r.*, u.username AS reviewer_username
+               FROM rows r
+               LEFT JOIN users u ON u.id = r.reviewer_id
+               WHERE r.id=? AND r.project_id=?""",
+            (row_id, project_id),
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "Row not found")
+        result = dict(row)
+        llm_results = conn.execute(
+            """SELECT rlr.slot,
+                      COALESCE(
+                          NULLIF(rlr.source_name, ''),
+                          (SELECT CASE
+                                      WHEN t.execution_mode = 'mcp' AND t.executor_name = 'claude' THEN 'Claude Code MCP'
+                                      WHEN t.execution_mode = 'mcp' AND t.executor_name = 'codex' THEN 'Codex MCP'
+                                      WHEN t.execution_mode = 'mcp' AND t.executor_name != '' THEN t.executor_name || ' MCP'
+                                      ELSE NULLIF(t.executor_name, '')
+                                  END
+                             FROM task_items ti
+                             JOIN tasks t ON t.id = ti.task_id
+                            WHERE ti.row_id = rlr.row_id
+                              AND COALESCE(t.slot, 1) = rlr.slot
+                              AND ti.status = 'done'
+                            ORDER BY ti.completed_at DESC, t.id DESC
+                            LIMIT 1),
+                          CASE
+                              WHEN NULLIF(cfg.name, '') IS NOT NULL AND cfg.name != 'LLM ' || rlr.slot
+                                  THEN cfg.name
+                              ELSE COALESCE(NULLIF(cfg.model, ''), NULLIF(cfg.name, ''))
+                          END,
+                          'LLM ' || rlr.slot
+                      ) AS name,
+                      rlr.relevance, rlr.labels, rlr.subtypes, rlr.reason, rlr.updated_at
+                 FROM row_llm_results rlr
+                 JOIN rows result_row ON result_row.id = rlr.row_id
+                 LEFT JOIN llm_configs cfg
+                        ON cfg.project_id = result_row.project_id AND cfg.slot = rlr.slot
+                WHERE rlr.row_id=?
+                ORDER BY rlr.slot""",
+            (row_id,),
+        ).fetchall()
+        result["llm_results"] = [dict(r) for r in llm_results]
     return result
 
 
@@ -166,7 +163,6 @@ def adjacent_rows(
     include_total: bool = True,
 ):
     """Return prev_id and next_id relative to row_id, respecting current filters."""
-    conn = get_db()
     conditions = ["project_id = ?"]
     params: list = [project_id]
     if status and status != "all":
@@ -181,40 +177,39 @@ def adjacent_rows(
         params += [like, like]
     where = " AND ".join(conditions)
 
-    current = conn.execute(
-        f"SELECT id, source_row_number FROM rows WHERE id = ? AND {where}",
-        [row_id] + params,
-    ).fetchone()
-    if not current:
+    with get_db() as conn:
+        current = conn.execute(
+            f"SELECT id, source_row_number FROM rows WHERE id = ? AND {where}",
+            [row_id] + params,
+        ).fetchone()
+        if not current:
+            total = (
+                conn.execute(f"SELECT COUNT(*) FROM rows WHERE {where}", params).fetchone()[0]
+                if include_total
+                else None
+            )
+            return {"prev_id": None, "next_id": None, "position": None, "total": total}
+
+        cursor = [current["source_row_number"], current["id"]]
         total = (
             conn.execute(f"SELECT COUNT(*) FROM rows WHERE {where}", params).fetchone()[0]
             if include_total
             else None
         )
-        conn.close()
-        return {"prev_id": None, "next_id": None, "position": None, "total": total}
-
-    cursor = [current["source_row_number"], current["id"]]
-    total = (
-        conn.execute(f"SELECT COUNT(*) FROM rows WHERE {where}", params).fetchone()[0]
-        if include_total
-        else None
-    )
-    position = conn.execute(
-        f"SELECT COUNT(*) FROM rows WHERE {where} AND (source_row_number, id) <= (?, ?)",
-        params + cursor,
-    ).fetchone()[0]
-    prev_row = conn.execute(
-        f"""SELECT id FROM rows WHERE {where} AND (source_row_number, id) < (?, ?)
-            ORDER BY source_row_number DESC, id DESC LIMIT 1""",
-        params + cursor,
-    ).fetchone()
-    next_row = conn.execute(
-        f"""SELECT id FROM rows WHERE {where} AND (source_row_number, id) > (?, ?)
-            ORDER BY source_row_number ASC, id ASC LIMIT 1""",
-        params + cursor,
-    ).fetchone()
-    conn.close()
+        position = conn.execute(
+            f"SELECT COUNT(*) FROM rows WHERE {where} AND (source_row_number, id) <= (?, ?)",
+            params + cursor,
+        ).fetchone()[0]
+        prev_row = conn.execute(
+            f"""SELECT id FROM rows WHERE {where} AND (source_row_number, id) < (?, ?)
+                ORDER BY source_row_number DESC, id DESC LIMIT 1""",
+            params + cursor,
+        ).fetchone()
+        next_row = conn.execute(
+            f"""SELECT id FROM rows WHERE {where} AND (source_row_number, id) > (?, ?)
+                ORDER BY source_row_number ASC, id ASC LIMIT 1""",
+            params + cursor,
+        ).fetchone()
     return {
         "prev_id": prev_row["id"] if prev_row else None,
         "next_id": next_row["id"] if next_row else None,
@@ -231,52 +226,50 @@ def batch_update_rows(
 ):
     if body.status not in VALID_ROW_STATUSES:
         raise HTTPException(400, "Invalid request")
-    conn = get_db()
-    user_row = conn.execute(
-        "SELECT id FROM users WHERE username=?", (current_user.username,)
-    ).fetchone()
-    reviewer_id = user_row["id"] if user_row else None
+    with get_db() as conn:
+        user_row = conn.execute(
+            "SELECT id FROM users WHERE username=?", (current_user.username,)
+        ).fetchone()
+        reviewer_id = user_row["id"] if user_row else None
 
-    if body.select_all:
-        conditions = ["project_id = ?"]
-        params: list = [project_id]
-        if body.status_filter and body.status_filter != "all":
-            conditions.append("status = ?")
-            params.append(body.status_filter)
-        if body.relevance_filter and body.relevance_filter != "all":
-            conditions.append("(corrected_relevance = ? OR (corrected_relevance IS NULL AND ai_relevance = ?))")
-            params += [body.relevance_filter, body.relevance_filter]
-        if body.q_filter:
-            conditions.append("(comment_content LIKE ? OR content LIKE ?)")
-            like = f"%{body.q_filter}%"
-            params += [like, like]
-        if body.disagreement_filter == "only":
-            conditions.append(
-                "(SELECT COUNT(DISTINCT rlr.relevance) FROM row_llm_results rlr"
-                " WHERE rlr.row_id = rows.id AND rlr.relevance IS NOT NULL) > 1"
-            )
-        where = " AND ".join(conditions)
-        row_ids = [r[0] for r in conn.execute(f"SELECT id FROM rows WHERE {where}", params).fetchall()]
-    else:
-        row_ids = body.ids or []
+        if body.select_all:
+            conditions = ["project_id = ?"]
+            params: list = [project_id]
+            if body.status_filter and body.status_filter != "all":
+                conditions.append("status = ?")
+                params.append(body.status_filter)
+            if body.relevance_filter and body.relevance_filter != "all":
+                conditions.append("(corrected_relevance = ? OR (corrected_relevance IS NULL AND ai_relevance = ?))")
+                params += [body.relevance_filter, body.relevance_filter]
+            if body.q_filter:
+                conditions.append("(comment_content LIKE ? OR content LIKE ?)")
+                like = f"%{body.q_filter}%"
+                params += [like, like]
+            if body.disagreement_filter == "only":
+                conditions.append(
+                    "(SELECT COUNT(DISTINCT rlr.relevance) FROM row_llm_results rlr"
+                    " WHERE rlr.row_id = rows.id AND rlr.relevance IS NOT NULL) > 1"
+                )
+            where = " AND ".join(conditions)
+            row_ids = [r[0] for r in conn.execute(f"SELECT id FROM rows WHERE {where}", params).fetchall()]
+        else:
+            row_ids = body.ids or []
 
-    if not row_ids:
-        conn.close()
-        return {"updated": 0}
+        if not row_ids:
+            return {"updated": 0}
 
-    placeholders = ",".join("?" * len(row_ids))
-    cursor = conn.execute(
-        f"UPDATE rows SET status=?, reviewer_id=?, reviewed_at=datetime('now','localtime'), version=COALESCE(version,0)+1 "
-        f"WHERE id IN ({placeholders}) AND project_id=?",
-        [body.status, reviewer_id] + row_ids + [project_id],
-    )
-    conn.executemany(
-        "INSERT INTO audit_log (project_id, row_id, username, status) VALUES (?, ?, ?, ?)",
-        [(project_id, rid, current_user.username, body.status) for rid in row_ids],
-    )
-    conn.commit()
-    updated = cursor.rowcount
-    conn.close()
+        placeholders = ",".join("?" * len(row_ids))
+        cursor = conn.execute(
+            f"UPDATE rows SET status=?, reviewer_id=?, reviewed_at=datetime('now','localtime'), version=COALESCE(version,0)+1 "
+            f"WHERE id IN ({placeholders}) AND project_id=?",
+            [body.status, reviewer_id] + row_ids + [project_id],
+        )
+        conn.executemany(
+            "INSERT INTO audit_log (project_id, row_id, username, status) VALUES (?, ?, ?, ?)",
+            [(project_id, rid, current_user.username, body.status) for rid in row_ids],
+        )
+        conn.commit()
+        updated = cursor.rowcount
     return {"updated": updated}
 
 
@@ -298,83 +291,78 @@ def update_row(
         if unknown_subtypes:
             raise HTTPException(400, f"含不允許的情緒子類型：{sorted(unknown_subtypes)}")
 
-    conn = get_db()
-    row = conn.execute(
-        "SELECT * FROM rows WHERE id=? AND project_id=?", (row_id, project_id)
-    ).fetchone()
-    if not row:
-        conn.close()
-        raise HTTPException(404, "Row not found")
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM rows WHERE id=? AND project_id=?", (row_id, project_id)
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "Row not found")
 
-    if body.corrected_emotional_subtypes is not None:
-        # 若這次同時送 labels，以該值驗證；只有更新子類型時，則沿用既有 labels。
-        labels_for_hierarchy = body.corrected_labels
-        if labels_for_hierarchy is None:
-            raw_labels = row["corrected_labels"] or row["ai_labels"] or "[]"
-            try:
-                labels_for_hierarchy = json.loads(raw_labels)
-            except (TypeError, json.JSONDecodeError):
-                labels_for_hierarchy = []
-        if not has_valid_emotional_hierarchy(labels_for_hierarchy or [], body.corrected_emotional_subtypes):
-            conn.close()
-            raise HTTPException(400, "情緒子類型必須同時標記 Emotional Resonance")
+        if body.corrected_emotional_subtypes is not None:
+            # 若這次同時送 labels，以該值驗證；只有更新子類型時，則沿用既有 labels。
+            labels_for_hierarchy = body.corrected_labels
+            if labels_for_hierarchy is None:
+                raw_labels = row["corrected_labels"] or row["ai_labels"] or "[]"
+                try:
+                    labels_for_hierarchy = json.loads(raw_labels)
+                except (TypeError, json.JSONDecodeError):
+                    labels_for_hierarchy = []
+            if not has_valid_emotional_hierarchy(labels_for_hierarchy or [], body.corrected_emotional_subtypes):
+                raise HTTPException(400, "情緒子類型必須同時標記 Emotional Resonance")
 
-    if body.version is not None and (row["version"] or 0) != body.version:
-        conn.close()
-        raise HTTPException(409, detail="CONFLICT")
+        if body.version is not None and (row["version"] or 0) != body.version:
+            raise HTTPException(409, detail="CONFLICT")
 
-    user_row = conn.execute(
-        "SELECT id FROM users WHERE username=?", (current_user.username,)
-    ).fetchone()
+        user_row = conn.execute(
+            "SELECT id FROM users WHERE username=?", (current_user.username,)
+        ).fetchone()
 
-    updates: dict = {}
-    if body.corrected_relevance is not None:
-        updates["corrected_relevance"] = body.corrected_relevance
-    if body.corrected_labels is not None:
-        updates["corrected_labels"] = json.dumps(body.corrected_labels, ensure_ascii=False)
-    if body.corrected_emotional_subtypes is not None:
-        updates["corrected_emotional_subtypes"] = json.dumps(body.corrected_emotional_subtypes, ensure_ascii=False)
-    if body.reviewer_note is not None:
-        updates["reviewer_note"] = body.reviewer_note
-    if body.status is not None:
-        updates["status"] = body.status
-        updates["reviewed_at"] = "datetime('now', 'localtime')"
-    updates["version"] = (row["version"] or 0) + 1
-    if user_row:
-        updates["reviewer_id"] = user_row["id"]
+        updates: dict = {}
+        if body.corrected_relevance is not None:
+            updates["corrected_relevance"] = body.corrected_relevance
+        if body.corrected_labels is not None:
+            updates["corrected_labels"] = json.dumps(body.corrected_labels, ensure_ascii=False)
+        if body.corrected_emotional_subtypes is not None:
+            updates["corrected_emotional_subtypes"] = json.dumps(body.corrected_emotional_subtypes, ensure_ascii=False)
+        if body.reviewer_note is not None:
+            updates["reviewer_note"] = body.reviewer_note
+        if body.status is not None:
+            updates["status"] = body.status
+            updates["reviewed_at"] = "datetime('now', 'localtime')"
+        updates["version"] = (row["version"] or 0) + 1
+        if user_row:
+            updates["reviewer_id"] = user_row["id"]
 
-    if updates:
-        # Handle datetime specially
-        reviewed_at_expr = updates.pop("reviewed_at", None)
-        set_parts = [f"{k} = ?" for k in updates]
-        vals = list(updates.values())
-        if reviewed_at_expr:
-            set_parts.append("reviewed_at = datetime('now', 'localtime')")
-        conn.execute(
-            f"UPDATE rows SET {', '.join(set_parts)} WHERE id=?",
-            vals + [row_id],
-        )
-        conn.execute(
-            """INSERT INTO audit_log (project_id, row_id, username, status, relevance, labels)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (project_id, row_id, current_user.username,
-             body.status,
-             body.corrected_relevance,
-             json.dumps(body.corrected_labels, ensure_ascii=False) if body.corrected_labels is not None else None),
-        )
-        conn.commit()
+        if updates:
+            # Handle datetime specially
+            reviewed_at_expr = updates.pop("reviewed_at", None)
+            set_parts = [f"{k} = ?" for k in updates]
+            vals = list(updates.values())
+            if reviewed_at_expr:
+                set_parts.append("reviewed_at = datetime('now', 'localtime')")
+            conn.execute(
+                f"UPDATE rows SET {', '.join(set_parts)} WHERE id=?",
+                vals + [row_id],
+            )
+            conn.execute(
+                """INSERT INTO audit_log (project_id, row_id, username, status, relevance, labels)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (project_id, row_id, current_user.username,
+                 body.status,
+                 body.corrected_relevance,
+                 json.dumps(body.corrected_labels, ensure_ascii=False) if body.corrected_labels is not None else None),
+            )
+            conn.commit()
 
-    updated = conn.execute("SELECT * FROM rows WHERE id=?", (row_id,)).fetchone()
-    conn.close()
+        updated = conn.execute("SELECT * FROM rows WHERE id=?", (row_id,)).fetchone()
     return dict(updated)
 
 
 @router.get("/{project_id}/rows/{row_id}/audit")
 def get_row_audit(project_id: int, row_id: int):
-    conn = get_db()
-    logs = conn.execute(
-        "SELECT * FROM audit_log WHERE row_id=? ORDER BY changed_at DESC LIMIT 30",
-        (row_id,),
-    ).fetchall()
-    conn.close()
+    with get_db() as conn:
+        logs = conn.execute(
+            "SELECT * FROM audit_log WHERE row_id=? ORDER BY changed_at DESC LIMIT 30",
+            (row_id,),
+        ).fetchall()
     return [dict(l) for l in logs]

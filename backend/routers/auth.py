@@ -58,11 +58,10 @@ def auth_config():
 
 @router.post("/login")
 def login(body: LoginRequest):
-    conn = get_db()
-    row = conn.execute(
-        "SELECT * FROM users WHERE username=? AND is_active=1", (body.username,)
-    ).fetchone()
-    conn.close()
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM users WHERE username=? AND is_active=1", (body.username,)
+        ).fetchone()
     if not row or not verify_password(body.password, row["password_hash"]):
         raise HTTPException(status_code=401, detail="帳號或密碼錯誤")
     if row["totp_enabled"]:
@@ -91,25 +90,22 @@ def google_login(body: GoogleTokenRequest):
     if not email:
         raise HTTPException(401, "無法取得 Google 帳號 Email")
 
-    conn = get_db()
-    user = conn.execute(
-        "SELECT * FROM users WHERE email=? AND is_active=1", (email,)
-    ).fetchone()
-    if not user:
-        conn.close()
-        raise HTTPException(401, "此 Google 帳號尚未被授權，請聯繫管理員綁定 Email")
+    with get_db() as conn:
+        user = conn.execute(
+            "SELECT * FROM users WHERE email=? AND is_active=1", (email,)
+        ).fetchone()
+        if not user:
+            raise HTTPException(401, "此 Google 帳號尚未被授權，請聯繫管理員綁定 Email")
 
-    google_sub = idinfo.get("sub")
-    if google_sub and not user["google_sub"]:
-        conn.execute("UPDATE users SET google_sub=? WHERE id=?", (google_sub, user["id"]))
-        conn.commit()
+        google_sub = idinfo.get("sub")
+        if google_sub and not user["google_sub"]:
+            conn.execute("UPDATE users SET google_sub=? WHERE id=?", (google_sub, user["id"]))
+            conn.commit()
 
     if user["totp_enabled"]:
-        conn.close()
         temp_token = create_temp_token(user["username"], user["role"])
         return {"requires_totp": True, "temp_token": temp_token}
 
-    conn.close()
     token = create_token(user["username"], user["role"])
     return {"token": token, "username": user["username"], "role": user["role"]}
 
@@ -125,11 +121,10 @@ def totp_verify_login(body: TotpVerifyRequest):
     except JWTError:
         raise HTTPException(401, "驗證逾時，請重新登入")
 
-    conn = get_db()
-    user = conn.execute(
-        "SELECT * FROM users WHERE username=? AND is_active=1", (username,)
-    ).fetchone()
-    conn.close()
+    with get_db() as conn:
+        user = conn.execute(
+            "SELECT * FROM users WHERE username=? AND is_active=1", (username,)
+        ).fetchone()
     if not user or not user["totp_secret"]:
         raise HTTPException(401, "此帳號未設定雙驗證")
 
@@ -143,11 +138,10 @@ def totp_verify_login(body: TotpVerifyRequest):
 
 @router.get("/totp/status")
 def totp_status(current_user: CurrentUser = Depends(get_current_user)):
-    conn = get_db()
-    user = conn.execute(
-        "SELECT totp_enabled FROM users WHERE username=?", (current_user.username,)
-    ).fetchone()
-    conn.close()
+    with get_db() as conn:
+        user = conn.execute(
+            "SELECT totp_enabled FROM users WHERE username=?", (current_user.username,)
+        ).fetchone()
     return {"enabled": bool(user["totp_enabled"]) if user else False}
 
 
@@ -158,48 +152,43 @@ def totp_setup(current_user: CurrentUser = Depends(get_current_user)):
         name=current_user.username,
         issuer_name="標注複查平台",
     )
-    conn = get_db()
-    conn.execute(
-        "UPDATE users SET totp_secret=?, totp_enabled=0 WHERE username=?",
-        (secret, current_user.username),
-    )
-    conn.commit()
-    conn.close()
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE users SET totp_secret=?, totp_enabled=0 WHERE username=?",
+            (secret, current_user.username),
+        )
+        conn.commit()
     return {"secret": secret, "uri": uri}
 
 
 @router.post("/totp/confirm")
 def totp_confirm(body: TotpConfirmRequest, current_user: CurrentUser = Depends(get_current_user)):
-    conn = get_db()
-    user = conn.execute(
-        "SELECT totp_secret FROM users WHERE username=?", (current_user.username,)
-    ).fetchone()
-    if not user or not user["totp_secret"]:
-        conn.close()
-        raise HTTPException(400, "請先產生雙驗證設定")
+    with get_db() as conn:
+        user = conn.execute(
+            "SELECT totp_secret FROM users WHERE username=?", (current_user.username,)
+        ).fetchone()
+        if not user or not user["totp_secret"]:
+            raise HTTPException(400, "請先產生雙驗證設定")
 
-    totp = pyotp.TOTP(user["totp_secret"])
-    if not totp.verify(body.code, valid_window=1):
-        conn.close()
-        raise HTTPException(400, "驗證碼錯誤，請重試")
+        totp = pyotp.TOTP(user["totp_secret"])
+        if not totp.verify(body.code, valid_window=1):
+            raise HTTPException(400, "驗證碼錯誤，請重試")
 
-    conn.execute(
-        "UPDATE users SET totp_enabled=1 WHERE username=?", (current_user.username,)
-    )
-    conn.commit()
-    conn.close()
+        conn.execute(
+            "UPDATE users SET totp_enabled=1 WHERE username=?", (current_user.username,)
+        )
+        conn.commit()
     return {"ok": True}
 
 
 @router.delete("/totp")
 def totp_disable(current_user: CurrentUser = Depends(get_current_user)):
-    conn = get_db()
-    conn.execute(
-        "UPDATE users SET totp_secret=NULL, totp_enabled=0 WHERE username=?",
-        (current_user.username,),
-    )
-    conn.commit()
-    conn.close()
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE users SET totp_secret=NULL, totp_enabled=0 WHERE username=?",
+            (current_user.username,),
+        )
+        conn.commit()
     return {"ok": True}
 
 
@@ -210,14 +199,13 @@ def me(user: CurrentUser = Depends(get_current_user)):
 
 @router.get("/tokens")
 def list_api_tokens(user: CurrentUser = Depends(get_current_user)):
-    conn = get_db()
-    rows = conn.execute(
-        """SELECT id, name, token_prefix, created_at, last_used_at
-           FROM api_tokens WHERE username=? AND revoked_at IS NULL
-           ORDER BY created_at DESC""",
-        (user.username,),
-    ).fetchall()
-    conn.close()
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT id, name, token_prefix, created_at, last_used_at
+               FROM api_tokens WHERE username=? AND revoked_at IS NULL
+               ORDER BY created_at DESC""",
+            (user.username,),
+        ).fetchall()
     return [dict(row) for row in rows]
 
 
@@ -229,31 +217,29 @@ def create_api_token(
     raw_token = "apt_" + secrets.token_urlsafe(32)
     token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
     prefix = raw_token[:12]
-    conn = get_db()
-    cur = conn.execute(
-        """INSERT INTO api_tokens (username, name, token_hash, token_prefix)
-           VALUES (?, ?, ?, ?)""",
-        (user.username, body.name.strip() or "Codex / Claude MCP", token_hash, prefix),
-    )
-    conn.commit()
-    row = conn.execute(
-        "SELECT id, name, token_prefix, created_at FROM api_tokens WHERE id=?",
-        (cur.lastrowid,),
-    ).fetchone()
-    conn.close()
+    with get_db() as conn:
+        cur = conn.execute(
+            """INSERT INTO api_tokens (username, name, token_hash, token_prefix)
+               VALUES (?, ?, ?, ?)""",
+            (user.username, body.name.strip() or "Codex / Claude MCP", token_hash, prefix),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT id, name, token_prefix, created_at FROM api_tokens WHERE id=?",
+            (cur.lastrowid,),
+        ).fetchone()
     return {**dict(row), "token": raw_token}
 
 
 @router.delete("/tokens/{token_id}")
 def revoke_api_token(token_id: int, user: CurrentUser = Depends(get_current_user)):
-    conn = get_db()
-    cur = conn.execute(
-        """UPDATE api_tokens SET revoked_at=datetime('now', 'localtime')
-           WHERE id=? AND username=? AND revoked_at IS NULL""",
-        (token_id, user.username),
-    )
-    conn.commit()
-    conn.close()
+    with get_db() as conn:
+        cur = conn.execute(
+            """UPDATE api_tokens SET revoked_at=datetime('now', 'localtime')
+               WHERE id=? AND username=? AND revoked_at IS NULL""",
+            (token_id, user.username),
+        )
+        conn.commit()
     if cur.rowcount == 0:
         raise HTTPException(404, "找不到存取權杖")
     return {"ok": True}
@@ -266,17 +252,15 @@ def change_password(
 ):
     if len(body.new_password) < 4:
         raise HTTPException(400, "密碼至少需要 4 個字元")
-    conn = get_db()
-    row = conn.execute(
-        "SELECT password_hash FROM users WHERE username=?", (user.username,)
-    ).fetchone()
-    if not row or not verify_password(body.current_password, row["password_hash"]):
-        conn.close()
-        raise HTTPException(400, "目前密碼不正確")
-    conn.execute(
-        "UPDATE users SET password_hash=? WHERE username=?",
-        (hash_password(body.new_password), user.username),
-    )
-    conn.commit()
-    conn.close()
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT password_hash FROM users WHERE username=?", (user.username,)
+        ).fetchone()
+        if not row or not verify_password(body.current_password, row["password_hash"]):
+            raise HTTPException(400, "目前密碼不正確")
+        conn.execute(
+            "UPDATE users SET password_hash=? WHERE username=?",
+            (hash_password(body.new_password), user.username),
+        )
+        conn.commit()
     return {"ok": True}

@@ -143,6 +143,21 @@ class DatabaseConnection:
         else:
             self._connection.close()
 
+    def __enter__(self) -> "DatabaseConnection":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        # Guarantee the connection always goes back to the pool, even when the
+        # caller raises mid-query (error, HTTPException, cancellation). Without
+        # this, a leaked connection is never returned via pool.putconn() and the
+        # pool permanently shrinks until it's exhausted (see incident: PoolTimeout
+        # on /api/projects).
+        try:
+            if exc_type is not None:
+                self.rollback()
+        finally:
+            self.close()
+
 
 _pool: ConnectionPool | None = None
 
@@ -154,7 +169,17 @@ def _get_pool() -> ConnectionPool:
             DATABASE_URL,
             min_size=2,
             max_size=20,
-            kwargs={"autocommit": False},
+            timeout=10,
+            max_idle=300,
+            max_lifetime=1800,
+            kwargs={
+                "autocommit": False,
+                # Defense in depth: if application code ever again fails to
+                # rollback/close, Postgres itself will kill a connection stuck
+                # in an open transaction or a runaway query instead of holding
+                # it (and its pool slot) forever.
+                "options": "-c idle_in_transaction_session_timeout=30000 -c statement_timeout=60000",
+            },
         )
     return _pool
 

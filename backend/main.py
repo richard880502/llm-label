@@ -1,9 +1,10 @@
 from pathlib import Path
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from psycopg_pool import PoolTimeout
 
 from .auth import get_current_user
 from .database import init_db
@@ -21,6 +22,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(PoolTimeout)
+async def pool_timeout_handler(request: Request, exc: PoolTimeout) -> JSONResponse:
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "Database is busy, please retry shortly."},
+    )
 
 
 @app.on_event("startup")

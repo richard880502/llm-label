@@ -12,15 +12,14 @@ def update_presence(
     row_id: int,
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    conn = get_db()
-    conn.execute(
-        """INSERT INTO presence (username, row_id, project_id, last_seen)
-           VALUES (?, ?, ?, datetime('now', 'localtime'))
-           ON CONFLICT(username, row_id) DO UPDATE SET last_seen = datetime('now', 'localtime')""",
-        (current_user.username, row_id, project_id),
-    )
-    conn.commit()
-    conn.close()
+    with get_db() as conn:
+        conn.execute(
+            """INSERT INTO presence (username, row_id, project_id, last_seen)
+               VALUES (?, ?, ?, datetime('now', 'localtime'))
+               ON CONFLICT(username, row_id) DO UPDATE SET last_seen = datetime('now', 'localtime')""",
+            (current_user.username, row_id, project_id),
+        )
+        conn.commit()
     return {"ok": True}
 
 
@@ -30,24 +29,22 @@ def remove_presence(
     row_id: int,
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    conn = get_db()
-    conn.execute(
-        "DELETE FROM presence WHERE username=? AND row_id=?",
-        (current_user.username, row_id),
-    )
-    conn.commit()
-    conn.close()
+    with get_db() as conn:
+        conn.execute(
+            "DELETE FROM presence WHERE username=? AND row_id=?",
+            (current_user.username, row_id),
+        )
+        conn.commit()
     return {"ok": True}
 
 
 @router.get("/{project_id}/presence")
 def get_presence(project_id: int):
-    conn = get_db()
-    rows = conn.execute(
-        """SELECT username, row_id FROM presence
-           WHERE project_id = ?
-           AND last_seen > datetime('now', 'localtime', '-30 seconds')""",
-        (project_id,),
-    ).fetchall()
-    conn.close()
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT username, row_id FROM presence
+               WHERE project_id = ?
+               AND last_seen > datetime('now', 'localtime', '-30 seconds')""",
+            (project_id,),
+        ).fetchall()
     return [dict(r) for r in rows]

@@ -88,12 +88,11 @@ def _result_source_name(task) -> str:
 
 @router.get("/{project_id}/tasks")
 def list_tasks(project_id: int, _: CurrentUser = Depends(get_current_user)):
-    conn = get_db()
-    tasks = conn.execute(
-        "SELECT * FROM tasks WHERE project_id=? ORDER BY created_at DESC, id DESC LIMIT 50",
-        (project_id,),
-    ).fetchall()
-    conn.close()
+    with get_db() as conn:
+        tasks = conn.execute(
+            "SELECT * FROM tasks WHERE project_id=? ORDER BY created_at DESC, id DESC LIMIT 50",
+            (project_id,),
+        ).fetchall()
     return [dict(t) for t in tasks]
 
 
@@ -104,60 +103,56 @@ def create_task(
     background_tasks: BackgroundTasks,
     user: CurrentUser = Depends(get_current_user),
 ):
-    conn = get_db()
-    proj = conn.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
-    if not proj:
-        conn.close()
-        raise HTTPException(404, "Project not found")
+    with get_db() as conn:
+        proj = conn.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
+        if not proj:
+            raise HTTPException(404, "Project not found")
 
-    if body.execution_mode == "api":
-        cfg_row = conn.execute(
-            "SELECT * FROM llm_configs WHERE project_id=? AND slot=? AND api_url != '' AND model != ''",
+        if body.execution_mode == "api":
+            cfg_row = conn.execute(
+                "SELECT * FROM llm_configs WHERE project_id=? AND slot=? AND api_url != '' AND model != ''",
+                (project_id, body.slot),
+            ).fetchone()
+            if not cfg_row:
+                raise HTTPException(400, f"LLM {body.slot} 尚未設定或缺少 URL/模型")
+
+        running = conn.execute(
+            """SELECT id FROM tasks WHERE project_id=? AND slot=?
+               AND status IN ('pending', 'waiting_for_agent', 'running')""",
             (project_id, body.slot),
         ).fetchone()
-        if not cfg_row:
-            conn.close()
-            raise HTTPException(400, f"LLM {body.slot} 尚未設定或缺少 URL/模型")
+        if running:
+            raise HTTPException(400, f"結果槽 {body.slot} 已有任務執行中")
 
-    running = conn.execute(
-        """SELECT id FROM tasks WHERE project_id=? AND slot=?
-           AND status IN ('pending', 'waiting_for_agent', 'running')""",
-        (project_id, body.slot),
-    ).fetchone()
-    if running:
-        conn.close()
-        raise HTTPException(400, f"結果槽 {body.slot} 已有任務執行中")
-
-    initial_status = "pending" if body.execution_mode == "api" else "waiting_for_agent"
-    executor_name = body.executor_name.strip() or ("platform-api" if body.execution_mode == "api" else "codex")
-    cur = conn.execute(
-        """INSERT INTO tasks
-           (project_id, slot, status, total, processed, failed, created_at,
-            execution_mode, executor_name, target, created_by, last_activity_at)
-           VALUES (?, ?, ?, 0, 0, 0, datetime('now', 'localtime'), ?, ?, ?, ?, datetime('now', 'localtime'))""",
-        (project_id, body.slot, initial_status, body.execution_mode, executor_name, body.target, user.username),
-    )
-    task_id = cur.lastrowid
-
-    if body.execution_mode == "mcp":
-        eligible = conn.execute(
-            f"SELECT id FROM rows WHERE project_id=? AND {_status_filter(body.target)} ORDER BY source_row_number",
-            (project_id,),
-        ).fetchall()
-        conn.executemany(
-            "INSERT INTO task_items (task_id, row_id) VALUES (?, ?)",
-            [(task_id, row["id"]) for row in eligible],
+        initial_status = "pending" if body.execution_mode == "api" else "waiting_for_agent"
+        executor_name = body.executor_name.strip() or ("platform-api" if body.execution_mode == "api" else "codex")
+        cur = conn.execute(
+            """INSERT INTO tasks
+               (project_id, slot, status, total, processed, failed, created_at,
+                execution_mode, executor_name, target, created_by, last_activity_at)
+               VALUES (?, ?, ?, 0, 0, 0, datetime('now', 'localtime'), ?, ?, ?, ?, datetime('now', 'localtime'))""",
+            (project_id, body.slot, initial_status, body.execution_mode, executor_name, body.target, user.username),
         )
-        conn.execute("UPDATE tasks SET total=? WHERE id=?", (len(eligible), task_id))
-        if not eligible:
-            conn.execute(
-                "UPDATE tasks SET status='done', finished_at=datetime('now', 'localtime') WHERE id=?",
-                (task_id,),
-            )
+        task_id = cur.lastrowid
 
-    conn.commit()
-    task = _task_payload(conn, task_id)
-    conn.close()
+        if body.execution_mode == "mcp":
+            eligible = conn.execute(
+                f"SELECT id FROM rows WHERE project_id=? AND {_status_filter(body.target)} ORDER BY source_row_number",
+                (project_id,),
+            ).fetchall()
+            conn.executemany(
+                "INSERT INTO task_items (task_id, row_id) VALUES (?, ?)",
+                [(task_id, row["id"]) for row in eligible],
+            )
+            conn.execute("UPDATE tasks SET total=? WHERE id=?", (len(eligible), task_id))
+            if not eligible:
+                conn.execute(
+                    "UPDATE tasks SET status='done', finished_at=datetime('now', 'localtime') WHERE id=?",
+                    (task_id,),
+                )
+
+        conn.commit()
+        task = _task_payload(conn, task_id)
 
     if body.execution_mode == "api":
         background_tasks.add_task(
@@ -176,26 +171,22 @@ def claim_task(
     task_id: int,
     user: CurrentUser = Depends(get_current_user),
 ):
-    conn = get_db()
-    task = _get_task(conn, project_id, task_id)
-    if task["execution_mode"] != "mcp":
-        conn.close()
-        raise HTTPException(400, "只有 MCP 任務可以由外部 Agent 領取")
-    if task["status"] not in ("waiting_for_agent", "running"):
-        conn.close()
-        raise HTTPException(400, f"任務目前狀態為 {task['status']}，無法領取")
-    claimed_by = task["claimed_by"] or user.username
-    if task["claimed_by"] and task["claimed_by"] != user.username:
-        conn.close()
-        raise HTTPException(409, f"任務已由 {task['claimed_by']} 領取")
-    conn.execute(
-        """UPDATE tasks SET status='running', claimed_by=?,
-           last_activity_at=datetime('now', 'localtime') WHERE id=?""",
-        (claimed_by, task_id),
-    )
-    conn.commit()
-    result = _task_payload(conn, task_id)
-    conn.close()
+    with get_db() as conn:
+        task = _get_task(conn, project_id, task_id)
+        if task["execution_mode"] != "mcp":
+            raise HTTPException(400, "只有 MCP 任務可以由外部 Agent 領取")
+        if task["status"] not in ("waiting_for_agent", "running"):
+            raise HTTPException(400, f"任務目前狀態為 {task['status']}，無法領取")
+        claimed_by = task["claimed_by"] or user.username
+        if task["claimed_by"] and task["claimed_by"] != user.username:
+            raise HTTPException(409, f"任務已由 {task['claimed_by']} 領取")
+        conn.execute(
+            """UPDATE tasks SET status='running', claimed_by=?,
+               last_activity_at=datetime('now', 'localtime') WHERE id=?""",
+            (claimed_by, task_id),
+        )
+        conn.commit()
+        result = _task_payload(conn, task_id)
     return result
 
 
@@ -206,91 +197,86 @@ def get_labeling_batch(
     batch_size: int = Query(default=10, ge=1, le=50),
     user: CurrentUser = Depends(get_current_user),
 ):
-    conn = get_db()
-    task = _get_task(conn, project_id, task_id)
-    if task["execution_mode"] != "mcp":
-        conn.close()
-        raise HTTPException(400, "這不是 MCP 任務")
-    if task["status"] == "waiting_for_agent":
+    with get_db() as conn:
+        task = _get_task(conn, project_id, task_id)
+        if task["execution_mode"] != "mcp":
+            raise HTTPException(400, "這不是 MCP 任務")
+        if task["status"] == "waiting_for_agent":
+            conn.execute(
+                """UPDATE tasks SET status='running', claimed_by=?,
+                   last_activity_at=datetime('now', 'localtime') WHERE id=?""",
+                (user.username, task_id),
+            )
+        elif task["status"] != "running":
+            raise HTTPException(400, f"任務目前狀態為 {task['status']}")
+        elif task["claimed_by"] and task["claimed_by"] != user.username:
+            raise HTTPException(409, f"任務已由 {task['claimed_by']} 領取")
+
         conn.execute(
-            """UPDATE tasks SET status='running', claimed_by=?,
-               last_activity_at=datetime('now', 'localtime') WHERE id=?""",
+            """UPDATE task_items SET status='pending', lease_token=NULL, lease_expires_at=NULL
+               WHERE task_id=? AND status='leased'
+               AND lease_expires_at <= datetime('now', 'localtime')""",
+            (task_id,),
+        )
+        items = conn.execute(
+            """SELECT ti.id AS item_id, r.* FROM task_items ti
+               JOIN rows r ON r.id=ti.row_id
+               WHERE ti.task_id=? AND ti.status='pending'
+               ORDER BY r.source_row_number LIMIT ?""",
+            (task_id, batch_size),
+        ).fetchall()
+
+        if not items:
+            counts = conn.execute(
+                "SELECT status, COUNT(*) AS count FROM task_items WHERE task_id=? GROUP BY status",
+                (task_id,),
+            ).fetchall()
+            by_status = {row["status"]: row["count"] for row in counts}
+            if by_status.get("done", 0) >= task["total"]:
+                conn.execute(
+                    "UPDATE tasks SET status='done', finished_at=datetime('now', 'localtime') WHERE id=?",
+                    (task_id,),
+                )
+            conn.commit()
+            updated = _task_payload(conn, task_id)
+            return {"task": updated, "lease_token": None, "rows": [], "message": "目前沒有可領取的資料"}
+
+        lease_token = uuid.uuid4().hex
+        conn.executemany(
+            """UPDATE task_items SET status='leased', lease_token=?,
+               lease_expires_at=datetime('now', 'localtime', '+5 minutes') WHERE id=?""",
+            [(lease_token, row["item_id"]) for row in items],
+        )
+        conn.execute(
+            "UPDATE tasks SET claimed_by=?, last_activity_at=datetime('now', 'localtime') WHERE id=?",
             (user.username, task_id),
         )
-    elif task["status"] != "running":
-        conn.close()
-        raise HTTPException(400, f"任務目前狀態為 {task['status']}")
-    elif task["claimed_by"] and task["claimed_by"] != user.username:
-        conn.close()
-        raise HTTPException(409, f"任務已由 {task['claimed_by']} 領取")
 
-    conn.execute(
-        """UPDATE task_items SET status='pending', lease_token=NULL, lease_expires_at=NULL
-           WHERE task_id=? AND status='leased'
-           AND lease_expires_at <= datetime('now', 'localtime')""",
-        (task_id,),
-    )
-    items = conn.execute(
-        """SELECT ti.id AS item_id, r.* FROM task_items ti
-           JOIN rows r ON r.id=ti.row_id
-           WHERE ti.task_id=? AND ti.status='pending'
-           ORDER BY r.source_row_number LIMIT ?""",
-        (task_id, batch_size),
-    ).fetchall()
-
-    if not items:
-        counts = conn.execute(
-            "SELECT status, COUNT(*) AS count FROM task_items WHERE task_id=? GROUP BY status",
-            (task_id,),
-        ).fetchall()
-        by_status = {row["status"]: row["count"] for row in counts}
-        if by_status.get("done", 0) >= task["total"]:
-            conn.execute(
-                "UPDATE tasks SET status='done', finished_at=datetime('now', 'localtime') WHERE id=?",
-                (task_id,),
-            )
+        cfg = _mcp_config(conn, project_id, task["slot"] or 1)
+        examples = select_examples(conn, project_id, cfg)
+        project = conn.execute(
+            "SELECT annotation_instructions FROM projects WHERE id=?", (project_id,)
+        ).fetchone()
+        project_instructions = project["annotation_instructions"] if project else ""
+        prompt_template = cfg.get("prompt_template") or DEFAULT_TEMPLATE
+        rows = [
+            {
+                "row_id": row["id"],
+                "source_row_number": row["source_row_number"],
+                "content": row["content"] or "",
+                "comment": row["comment_content"] or "",
+                "version": row["version"] or 0,
+                "prompt": build_prompt(
+                    prompt_template,
+                    examples,
+                    row["comment_content"] or "",
+                    project_instructions,
+                ),
+            }
+            for row in items
+        ]
         conn.commit()
         updated = _task_payload(conn, task_id)
-        conn.close()
-        return {"task": updated, "lease_token": None, "rows": [], "message": "目前沒有可領取的資料"}
-
-    lease_token = uuid.uuid4().hex
-    conn.executemany(
-        """UPDATE task_items SET status='leased', lease_token=?,
-           lease_expires_at=datetime('now', 'localtime', '+5 minutes') WHERE id=?""",
-        [(lease_token, row["item_id"]) for row in items],
-    )
-    conn.execute(
-        "UPDATE tasks SET claimed_by=?, last_activity_at=datetime('now', 'localtime') WHERE id=?",
-        (user.username, task_id),
-    )
-
-    cfg = _mcp_config(conn, project_id, task["slot"] or 1)
-    examples = select_examples(conn, project_id, cfg)
-    project = conn.execute(
-        "SELECT annotation_instructions FROM projects WHERE id=?", (project_id,)
-    ).fetchone()
-    project_instructions = project["annotation_instructions"] if project else ""
-    prompt_template = cfg.get("prompt_template") or DEFAULT_TEMPLATE
-    rows = [
-        {
-            "row_id": row["id"],
-            "source_row_number": row["source_row_number"],
-            "content": row["content"] or "",
-            "comment": row["comment_content"] or "",
-            "version": row["version"] or 0,
-            "prompt": build_prompt(
-                prompt_template,
-                examples,
-                row["comment_content"] or "",
-                project_instructions,
-            ),
-        }
-        for row in items
-    ]
-    conn.commit()
-    updated = _task_payload(conn, task_id)
-    conn.close()
     return {"task": updated, "lease_token": lease_token, "lease_minutes": 5, "rows": rows}
 
 
@@ -301,104 +287,97 @@ def submit_labeling_batch(
     body: SubmitBatchRequest,
     user: CurrentUser = Depends(get_current_user),
 ):
-    conn = get_db()
-    task = _get_task(conn, project_id, task_id)
-    if task["execution_mode"] != "mcp" or task["status"] != "running":
-        conn.close()
-        raise HTTPException(400, "任務目前不接受 MCP 結果")
-    if task["claimed_by"] and task["claimed_by"] != user.username:
-        conn.close()
-        raise HTTPException(409, f"任務已由 {task['claimed_by']} 領取")
+    with get_db() as conn:
+        task = _get_task(conn, project_id, task_id)
+        if task["execution_mode"] != "mcp" or task["status"] != "running":
+            raise HTTPException(400, "任務目前不接受 MCP 結果")
+        if task["claimed_by"] and task["claimed_by"] != user.username:
+            raise HTTPException(409, f"任務已由 {task['claimed_by']} 領取")
 
-    leased = conn.execute(
-        """SELECT row_id FROM task_items WHERE task_id=? AND status='leased'
-           AND lease_token=? AND lease_expires_at > datetime('now', 'localtime')""",
-        (task_id, body.lease_token),
-    ).fetchall()
-    leased_ids = {row["row_id"] for row in leased}
-    result_ids = [result.row_id for result in body.results]
-    if not result_ids or len(result_ids) != len(set(result_ids)):
-        conn.close()
-        raise HTTPException(400, "結果不可為空或包含重複 row_id")
-    if not set(result_ids).issubset(leased_ids):
-        conn.close()
-        raise HTTPException(409, "部分資料不屬於此批次，或租約已過期")
+        leased = conn.execute(
+            """SELECT row_id FROM task_items WHERE task_id=? AND status='leased'
+               AND lease_token=? AND lease_expires_at > datetime('now', 'localtime')""",
+            (task_id, body.lease_token),
+        ).fetchall()
+        leased_ids = {row["row_id"] for row in leased}
+        result_ids = [result.row_id for result in body.results]
+        if not result_ids or len(result_ids) != len(set(result_ids)):
+            raise HTTPException(400, "結果不可為空或包含重複 row_id")
+        if not set(result_ids).issubset(leased_ids):
+            raise HTTPException(409, "部分資料不屬於此批次，或租約已過期")
 
-    slot = task["slot"] or 1
-    source_name = _result_source_name(task)
-    llm_result_params = []
-    rows_update_params = []
-    task_item_params = []
-    for result in body.results:
-        unknown_labels = set(result.labels) - ALLOWED_LABELS
-        unknown_subtypes = set(result.emotional_subtypes) - ALLOWED_SUBTYPES
-        if unknown_labels or unknown_subtypes:
-            conn.close()
-            raise HTTPException(
-                400,
-                f"row {result.row_id} 含不允許的標籤：{sorted(unknown_labels | unknown_subtypes)}",
+        slot = task["slot"] or 1
+        source_name = _result_source_name(task)
+        llm_result_params = []
+        rows_update_params = []
+        task_item_params = []
+        for result in body.results:
+            unknown_labels = set(result.labels) - ALLOWED_LABELS
+            unknown_subtypes = set(result.emotional_subtypes) - ALLOWED_SUBTYPES
+            if unknown_labels or unknown_subtypes:
+                raise HTTPException(
+                    400,
+                    f"row {result.row_id} 含不允許的標籤：{sorted(unknown_labels | unknown_subtypes)}",
+                )
+            if not has_valid_emotional_hierarchy(result.labels, result.emotional_subtypes):
+                raise HTTPException(
+                    400,
+                    f"row {result.row_id} 的情緒子類型必須同時標記 Emotional Resonance",
+                )
+            labels = json.dumps(result.labels, ensure_ascii=False)
+            subtypes = json.dumps(result.emotional_subtypes, ensure_ascii=False)
+            llm_result_params.append(
+                (result.row_id, slot, source_name, result.relevance, labels, subtypes, result.reason)
             )
-        if not has_valid_emotional_hierarchy(result.labels, result.emotional_subtypes):
-            conn.close()
-            raise HTTPException(
-                400,
-                f"row {result.row_id} 的情緒子類型必須同時標記 Emotional Resonance",
-            )
-        labels = json.dumps(result.labels, ensure_ascii=False)
-        subtypes = json.dumps(result.emotional_subtypes, ensure_ascii=False)
-        llm_result_params.append(
-            (result.row_id, slot, source_name, result.relevance, labels, subtypes, result.reason)
+            if slot == 1:
+                rows_update_params.append((result.relevance, labels, subtypes, result.reason, result.row_id))
+            else:
+                rows_update_params.append((result.row_id,))
+            task_item_params.append((task_id, result.row_id))
+
+        conn.executemany(
+            """INSERT INTO row_llm_results
+               (row_id, slot, source_name, relevance, labels, subtypes, reason, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
+               ON CONFLICT (row_id, slot) DO UPDATE SET
+                   source_name=EXCLUDED.source_name,
+                   relevance=EXCLUDED.relevance,
+                   labels=EXCLUDED.labels,
+                   subtypes=EXCLUDED.subtypes,
+                   reason=EXCLUDED.reason,
+                   updated_at=EXCLUDED.updated_at""",
+            llm_result_params,
         )
         if slot == 1:
-            rows_update_params.append((result.relevance, labels, subtypes, result.reason, result.row_id))
+            conn.executemany(
+                """UPDATE rows SET ai_relevance=?, ai_labels=?, ai_emotional_subtypes=?, ai_reason=?,
+                   llm_updated_at=datetime('now', 'localtime') WHERE id=?""",
+                rows_update_params,
+            )
         else:
-            rows_update_params.append((result.row_id,))
-        task_item_params.append((task_id, result.row_id))
-
-    conn.executemany(
-        """INSERT INTO row_llm_results
-           (row_id, slot, source_name, relevance, labels, subtypes, reason, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
-           ON CONFLICT (row_id, slot) DO UPDATE SET
-               source_name=EXCLUDED.source_name,
-               relevance=EXCLUDED.relevance,
-               labels=EXCLUDED.labels,
-               subtypes=EXCLUDED.subtypes,
-               reason=EXCLUDED.reason,
-               updated_at=EXCLUDED.updated_at""",
-        llm_result_params,
-    )
-    if slot == 1:
+            conn.executemany(
+                "UPDATE rows SET llm_updated_at=datetime('now', 'localtime') WHERE id=?",
+                rows_update_params,
+            )
         conn.executemany(
-            """UPDATE rows SET ai_relevance=?, ai_labels=?, ai_emotional_subtypes=?, ai_reason=?,
-               llm_updated_at=datetime('now', 'localtime') WHERE id=?""",
-            rows_update_params,
+            """UPDATE task_items SET status='done', completed_at=datetime('now', 'localtime'),
+               lease_token=NULL, lease_expires_at=NULL WHERE task_id=? AND row_id=?""",
+            task_item_params,
         )
-    else:
-        conn.executemany(
-            "UPDATE rows SET llm_updated_at=datetime('now', 'localtime') WHERE id=?",
-            rows_update_params,
-        )
-    conn.executemany(
-        """UPDATE task_items SET status='done', completed_at=datetime('now', 'localtime'),
-           lease_token=NULL, lease_expires_at=NULL WHERE task_id=? AND row_id=?""",
-        task_item_params,
-    )
 
-    processed = conn.execute(
-        "SELECT COUNT(*) AS count FROM task_items WHERE task_id=? AND status='done'",
-        (task_id,),
-    ).fetchone()["count"]
-    status = "done" if processed >= task["total"] else "running"
-    finished_sql = ", finished_at=datetime('now', 'localtime')" if status == "done" else ""
-    conn.execute(
-        f"""UPDATE tasks SET processed=?, status=?, claimed_by=?,
-            last_activity_at=datetime('now', 'localtime'){finished_sql} WHERE id=?""",
-        (processed, status, user.username, task_id),
-    )
-    conn.commit()
-    updated = _task_payload(conn, task_id)
-    conn.close()
+        processed = conn.execute(
+            "SELECT COUNT(*) AS count FROM task_items WHERE task_id=? AND status='done'",
+            (task_id,),
+        ).fetchone()["count"]
+        status = "done" if processed >= task["total"] else "running"
+        finished_sql = ", finished_at=datetime('now', 'localtime')" if status == "done" else ""
+        conn.execute(
+            f"""UPDATE tasks SET processed=?, status=?, claimed_by=?,
+                last_activity_at=datetime('now', 'localtime'){finished_sql} WHERE id=?""",
+            (processed, status, user.username, task_id),
+        )
+        conn.commit()
+        updated = _task_payload(conn, task_id)
     return {"accepted": len(body.results), "task": updated}
 
 
@@ -408,61 +387,54 @@ def heartbeat_task(
     task_id: int,
     user: CurrentUser = Depends(get_current_user),
 ):
-    conn = get_db()
-    task = _get_task(conn, project_id, task_id)
-    if task["status"] not in ("waiting_for_agent", "running"):
-        conn.close()
-        raise HTTPException(400, "任務已不在執行中")
-    conn.execute(
-        "UPDATE tasks SET last_activity_at=datetime('now', 'localtime'), claimed_by=? WHERE id=?",
-        (user.username, task_id),
-    )
-    conn.commit()
-    updated = _task_payload(conn, task_id)
-    conn.close()
+    with get_db() as conn:
+        task = _get_task(conn, project_id, task_id)
+        if task["status"] not in ("waiting_for_agent", "running"):
+            raise HTTPException(400, "任務已不在執行中")
+        conn.execute(
+            "UPDATE tasks SET last_activity_at=datetime('now', 'localtime'), claimed_by=? WHERE id=?",
+            (user.username, task_id),
+        )
+        conn.commit()
+        updated = _task_payload(conn, task_id)
     return updated
 
 
 @router.post("/{project_id}/tasks/{task_id}/cancel")
 def cancel_task(project_id: int, task_id: int, _: CurrentUser = Depends(get_current_user)):
-    conn = get_db()
-    task = _get_task(conn, project_id, task_id)
-    if task["status"] not in ACTIVE_STATUSES:
-        conn.close()
-        raise HTTPException(400, "只能停止等待中或執行中的任務")
-    if task["execution_mode"] == "api":
-        mark_task_cancelled(task_id)
-    conn.execute(
-        """UPDATE tasks SET status='cancelled', error='使用者手動停止',
-           finished_at=datetime('now', 'localtime'), last_activity_at=datetime('now', 'localtime')
-           WHERE id=?""",
-        (task_id,),
-    )
-    conn.commit()
-    result = _task_payload(conn, task_id)
-    conn.close()
+    with get_db() as conn:
+        task = _get_task(conn, project_id, task_id)
+        if task["status"] not in ACTIVE_STATUSES:
+            raise HTTPException(400, "只能停止等待中或執行中的任務")
+        if task["execution_mode"] == "api":
+            mark_task_cancelled(task_id)
+        conn.execute(
+            """UPDATE tasks SET status='cancelled', error='使用者手動停止',
+               finished_at=datetime('now', 'localtime'), last_activity_at=datetime('now', 'localtime')
+               WHERE id=?""",
+            (task_id,),
+        )
+        conn.commit()
+        result = _task_payload(conn, task_id)
     return result
 
 
 @router.delete("/{project_id}/tasks/{task_id}")
 def delete_task(project_id: int, task_id: int, _: CurrentUser = Depends(get_current_user)):
-    conn = get_db()
-    task = _get_task(conn, project_id, task_id)
-    if task["status"] in ACTIVE_STATUSES:
-        conn.close()
-        raise HTTPException(400, "請先停止任務再刪除")
-    conn.execute("DELETE FROM tasks WHERE id=?", (task_id,))
-    conn.commit()
-    conn.close()
+    with get_db() as conn:
+        task = _get_task(conn, project_id, task_id)
+        if task["status"] in ACTIVE_STATUSES:
+            raise HTTPException(400, "請先停止任務再刪除")
+        conn.execute("DELETE FROM tasks WHERE id=?", (task_id,))
+        conn.commit()
     return {"ok": True}
 
 
 @router.get("/{project_id}/tasks/{task_id}")
 def get_task(project_id: int, task_id: int, _: CurrentUser = Depends(get_current_user)):
-    conn = get_db()
-    task = _get_task(conn, project_id, task_id)
-    result = dict(task)
-    conn.close()
+    with get_db() as conn:
+        task = _get_task(conn, project_id, task_id)
+        result = dict(task)
     return result
 
 
