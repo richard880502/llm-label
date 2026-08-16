@@ -257,6 +257,10 @@ async def run_classification_task(
     except Exception as e:
         if task_id in _cancelled_tasks:
             return
+        # The failing statement may have left the transaction aborted; without this,
+        # Postgres would reject the status-update below too (transaction is aborted,
+        # commands ignored until end of transaction block).
+        conn.rollback()
         conn.execute(
             "UPDATE tasks SET status='failed', error=?, finished_at=datetime('now', 'localtime') WHERE id=?",
             (str(e), task_id),

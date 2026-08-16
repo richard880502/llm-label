@@ -80,20 +80,19 @@ def _parse_list_field(val: str) -> str:
 
 @router.get("")
 def list_projects(_: CurrentUser = Depends(get_current_user)):
-    conn = get_db()
-    rows = conn.execute("""
-        SELECT p.*,
-               COUNT(r.id) as total,
-               SUM(CASE WHEN r.status = 'approved'  THEN 1 ELSE 0 END) as approved,
-               SUM(CASE WHEN r.status = 'corrected' THEN 1 ELSE 0 END) as corrected,
-               SUM(CASE WHEN r.status = 'uncertain' THEN 1 ELSE 0 END) as uncertain,
-               SUM(CASE WHEN r.status = 'pending'   THEN 1 ELSE 0 END) as pending
-        FROM projects p
-        LEFT JOIN rows r ON r.project_id = p.id
-        GROUP BY p.id
-        ORDER BY p.created_at DESC
-    """).fetchall()
-    conn.close()
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT p.*,
+                   COUNT(r.id) as total,
+                   SUM(CASE WHEN r.status = 'approved'  THEN 1 ELSE 0 END) as approved,
+                   SUM(CASE WHEN r.status = 'corrected' THEN 1 ELSE 0 END) as corrected,
+                   SUM(CASE WHEN r.status = 'uncertain' THEN 1 ELSE 0 END) as uncertain,
+                   SUM(CASE WHEN r.status = 'pending'   THEN 1 ELSE 0 END) as pending
+            FROM projects p
+            LEFT JOIN rows r ON r.project_id = p.id
+            GROUP BY p.id
+            ORDER BY p.created_at DESC
+        """).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -143,44 +142,43 @@ async def create_project(name: str = Form(...), file: UploadFile = File(...), _:
     if not data_rows:
         raise HTTPException(400, "檔案是空的")
 
-    conn = get_db()
-    cur = conn.execute(
-        "INSERT INTO projects (name, filename, total_rows) VALUES (?, ?, ?)",
-        (name, file.filename, len(data_rows)),
-    )
-    project_id = cur.lastrowid
+    with get_db() as conn:
+        cur = conn.execute(
+            "INSERT INTO projects (name, filename, total_rows) VALUES (?, ?, ?)",
+            (name, file.filename, len(data_rows)),
+        )
+        project_id = cur.lastrowid
 
-    insert_rows = []
-    for i, row in enumerate(data_rows, start=1):
-        src_num = row.get("SOURCE_ROW_NUMBER") or row.get("source_row_number") or str(i)
-        try:
-            src_num = int(src_num)
-        except (ValueError, TypeError):
-            src_num = i
+        insert_rows = []
+        for i, row in enumerate(data_rows, start=1):
+            src_num = row.get("SOURCE_ROW_NUMBER") or row.get("source_row_number") or str(i)
+            try:
+                src_num = int(src_num)
+            except (ValueError, TypeError):
+                src_num = i
 
-        content = _find_col(row, CONTENT_COLS)
-        comment = _find_col(row, COMMENT_COLS)
+            content = _find_col(row, CONTENT_COLS)
+            comment = _find_col(row, COMMENT_COLS)
 
-        ai_relevance = _find_col(row, ["AI_RELEVANCE", "ai_relevance"]) or None
-        ai_labels = _parse_list_field(_find_col(row, ["AI_LABELS", "ai_labels"]))
-        ai_subtypes = _parse_list_field(_find_col(row, ["AI_EMOTIONAL_SUBTYPES", "ai_emotional_subtypes"]))
-        ai_reason = _find_col(row, ["AI_REASON", "ai_reason"]) or None
+            ai_relevance = _find_col(row, ["AI_RELEVANCE", "ai_relevance"]) or None
+            ai_labels = _parse_list_field(_find_col(row, ["AI_LABELS", "ai_labels"]))
+            ai_subtypes = _parse_list_field(_find_col(row, ["AI_EMOTIONAL_SUBTYPES", "ai_emotional_subtypes"]))
+            ai_reason = _find_col(row, ["AI_REASON", "ai_reason"]) or None
 
-        insert_rows.append((
-            project_id, src_num, json.dumps(row, ensure_ascii=False),
-            content, comment, ai_relevance, ai_labels, ai_subtypes, ai_reason,
-        ))
+            insert_rows.append((
+                project_id, src_num, json.dumps(row, ensure_ascii=False),
+                content, comment, ai_relevance, ai_labels, ai_subtypes, ai_reason,
+            ))
 
-    conn.executemany(
-        """INSERT INTO rows
-           (project_id, source_row_number, original_data, content, comment_content,
-            ai_relevance, ai_labels, ai_emotional_subtypes, ai_reason)
-           VALUES (?,?,?,?,?,?,?,?,?)""",
-        insert_rows,
-    )
-    conn.commit()
-    proj = conn.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
-    conn.close()
+        conn.executemany(
+            """INSERT INTO rows
+               (project_id, source_row_number, original_data, content, comment_content,
+                ai_relevance, ai_labels, ai_emotional_subtypes, ai_reason)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            insert_rows,
+        )
+        conn.commit()
+        proj = conn.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
     return dict(proj)
 
 
@@ -212,41 +210,40 @@ class AnnotationInstructionsUpdate(BaseModel):
 @router.get("/{project_id}/llm-configs")
 def list_llm_configs(project_id: int, _: CurrentUser = Depends(get_current_user)):
     from ..llm.prompt_builder import DEFAULT_TEMPLATE
-    conn = get_db()
-    rows = conn.execute(
-        "SELECT * FROM llm_configs WHERE project_id=? ORDER BY slot", (project_id,)
-    ).fetchall()
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM llm_configs WHERE project_id=? ORDER BY slot", (project_id,)
+        ).fetchall()
 
-    if not rows:
-        proj = conn.execute("SELECT llm_config FROM projects WHERE id=?", (project_id,)).fetchone()
-        if proj and proj["llm_config"]:
-            try:
-                old = json.loads(proj["llm_config"])
-                if old.get("api_url") or old.get("model"):
-                    conn.execute(
-                        """INSERT INTO llm_configs
-                           (project_id, slot, name, api_url, api_key, model, prompt_template, examples_mode, examples_per_label)
-                           VALUES (?, 1, 'LLM 1', ?, ?, ?, ?, ?, ?)
-                           ON CONFLICT (project_id, slot) DO UPDATE SET
-                               name=EXCLUDED.name,
-                               api_url=EXCLUDED.api_url,
-                               api_key=EXCLUDED.api_key,
-                               model=EXCLUDED.model,
-                               prompt_template=EXCLUDED.prompt_template,
-                               examples_mode=EXCLUDED.examples_mode,
-                               examples_per_label=EXCLUDED.examples_per_label""",
-                        (project_id, old.get("api_url", ""), old.get("api_key", ""),
-                         old.get("model", ""), old.get("prompt_template", ""),
-                         old.get("examples_mode", "corrected_only"), old.get("examples_per_label", 3)),
-                    )
-                    conn.commit()
-                    rows = conn.execute(
-                        "SELECT * FROM llm_configs WHERE project_id=? ORDER BY slot", (project_id,)
-                    ).fetchall()
-            except Exception:
-                pass
+        if not rows:
+            proj = conn.execute("SELECT llm_config FROM projects WHERE id=?", (project_id,)).fetchone()
+            if proj and proj["llm_config"]:
+                try:
+                    old = json.loads(proj["llm_config"])
+                    if old.get("api_url") or old.get("model"):
+                        conn.execute(
+                            """INSERT INTO llm_configs
+                               (project_id, slot, name, api_url, api_key, model, prompt_template, examples_mode, examples_per_label)
+                               VALUES (?, 1, 'LLM 1', ?, ?, ?, ?, ?, ?)
+                               ON CONFLICT (project_id, slot) DO UPDATE SET
+                                   name=EXCLUDED.name,
+                                   api_url=EXCLUDED.api_url,
+                                   api_key=EXCLUDED.api_key,
+                                   model=EXCLUDED.model,
+                                   prompt_template=EXCLUDED.prompt_template,
+                                   examples_mode=EXCLUDED.examples_mode,
+                                   examples_per_label=EXCLUDED.examples_per_label""",
+                            (project_id, old.get("api_url", ""), old.get("api_key", ""),
+                             old.get("model", ""), old.get("prompt_template", ""),
+                             old.get("examples_mode", "corrected_only"), old.get("examples_per_label", 3)),
+                        )
+                        conn.commit()
+                        rows = conn.execute(
+                            "SELECT * FROM llm_configs WHERE project_id=? ORDER BY slot", (project_id,)
+                        ).fetchall()
+                except Exception:
+                    pass
 
-    conn.close()
     by_slot = {}
     for r in rows:
         d = dict(r)
@@ -282,35 +279,34 @@ def set_llm_config_slot(project_id: int, slot: int, body: LLMSlotUpdate, _: Curr
                 raise ValueError("必須是 JSON 物件")
         except Exception:
             raise HTTPException(400, "額外請求參數必須是合法的 JSON 物件，例如 {\"chat_template_kwargs\": {\"enable_thinking\": false}}")
-    conn = get_db()
-    existing = conn.execute(
-        "SELECT api_key FROM llm_configs WHERE project_id=? AND slot=?", (project_id, slot)
-    ).fetchone()
-    resolved_key = _resolve_api_key(body.api_key, existing["api_key"] if existing else "")
-    conn.execute(
-        """INSERT INTO llm_configs
-           (project_id, slot, name, api_url, api_key, model, prompt_template, examples_mode, examples_per_label, concurrency, extra_body)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT (project_id, slot) DO UPDATE SET
-               name=EXCLUDED.name,
-               api_url=EXCLUDED.api_url,
-               api_key=EXCLUDED.api_key,
-               model=EXCLUDED.model,
-               prompt_template=EXCLUDED.prompt_template,
-               examples_mode=EXCLUDED.examples_mode,
-               examples_per_label=EXCLUDED.examples_per_label,
-               concurrency=EXCLUDED.concurrency,
-               extra_body=EXCLUDED.extra_body""",
-        (project_id, slot, body.name or f"LLM {slot}",
-         body.api_url, resolved_key, body.model,
-         body.prompt_template, body.examples_mode, body.examples_per_label, max(1, body.concurrency),
-         body.extra_body),
-    )
-    conn.commit()
-    row = conn.execute(
-        "SELECT * FROM llm_configs WHERE project_id=? AND slot=?", (project_id, slot)
-    ).fetchone()
-    conn.close()
+    with get_db() as conn:
+        existing = conn.execute(
+            "SELECT api_key FROM llm_configs WHERE project_id=? AND slot=?", (project_id, slot)
+        ).fetchone()
+        resolved_key = _resolve_api_key(body.api_key, existing["api_key"] if existing else "")
+        conn.execute(
+            """INSERT INTO llm_configs
+               (project_id, slot, name, api_url, api_key, model, prompt_template, examples_mode, examples_per_label, concurrency, extra_body)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT (project_id, slot) DO UPDATE SET
+                   name=EXCLUDED.name,
+                   api_url=EXCLUDED.api_url,
+                   api_key=EXCLUDED.api_key,
+                   model=EXCLUDED.model,
+                   prompt_template=EXCLUDED.prompt_template,
+                   examples_mode=EXCLUDED.examples_mode,
+                   examples_per_label=EXCLUDED.examples_per_label,
+                   concurrency=EXCLUDED.concurrency,
+                   extra_body=EXCLUDED.extra_body""",
+            (project_id, slot, body.name or f"LLM {slot}",
+             body.api_url, resolved_key, body.model,
+             body.prompt_template, body.examples_mode, body.examples_per_label, max(1, body.concurrency),
+             body.extra_body),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT * FROM llm_configs WHERE project_id=? AND slot=?", (project_id, slot)
+        ).fetchone()
     result = dict(row)
     result["has_api_key"] = bool(result.get("api_key"))
     result["api_key"] = _mask_api_key(result.get("api_key") or "")
@@ -319,23 +315,21 @@ def set_llm_config_slot(project_id: int, slot: int, body: LLMSlotUpdate, _: Curr
 
 @router.delete("/{project_id}/llm-configs/{slot}")
 def delete_llm_config_slot(project_id: int, slot: int, _: CurrentUser = Depends(get_current_user)):
-    conn = get_db()
-    conn.execute(
-        "DELETE FROM llm_configs WHERE project_id=? AND slot=?", (project_id, slot)
-    )
-    conn.commit()
-    conn.close()
+    with get_db() as conn:
+        conn.execute(
+            "DELETE FROM llm_configs WHERE project_id=? AND slot=?", (project_id, slot)
+        )
+        conn.commit()
     return {"ok": True}
 
 
 @router.get("/{project_id}/llm-configs/{slot}/models")
 def list_slot_models(project_id: int, slot: int, _: CurrentUser = Depends(get_current_user)):
     from ..llm.client import list_models
-    conn = get_db()
-    row = conn.execute(
-        "SELECT api_url, api_key FROM llm_configs WHERE project_id=? AND slot=?", (project_id, slot)
-    ).fetchone()
-    conn.close()
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT api_url, api_key FROM llm_configs WHERE project_id=? AND slot=?", (project_id, slot)
+        ).fetchone()
     if not row or not row["api_url"]:
         return []
     try:
@@ -348,19 +342,17 @@ def list_slot_models(project_id: int, slot: int, _: CurrentUser = Depends(get_cu
 def preview_slot_prompt(project_id: int, slot: int, _: CurrentUser = Depends(get_current_user)):
     from ..llm.example_selector import select_examples
     from ..llm.prompt_builder import build_prompt
-    conn = get_db()
-    row = conn.execute(
-        "SELECT * FROM llm_configs WHERE project_id=? AND slot=?", (project_id, slot)
-    ).fetchone()
-    if not row:
-        conn.close()
-        raise HTTPException(404, "此 slot 尚未設定")
-    cfg = dict(row)
-    examples = select_examples(conn, project_id, cfg)
-    project = conn.execute(
-        "SELECT annotation_instructions FROM projects WHERE id=?", (project_id,)
-    ).fetchone()
-    conn.close()
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM llm_configs WHERE project_id=? AND slot=?", (project_id, slot)
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "此 slot 尚未設定")
+        cfg = dict(row)
+        examples = select_examples(conn, project_id, cfg)
+        project = conn.execute(
+            "SELECT annotation_instructions FROM projects WHERE id=?", (project_id,)
+        ).fetchone()
     sample = "這個活動辦得很好，謝謝主辦單位的用心！"
     prompt = build_prompt(
         cfg.get("prompt_template", ""),
@@ -382,27 +374,24 @@ def update_annotation_instructions(
     instructions = body.annotation_instructions.strip()
     if len(instructions) > 12000:
         raise HTTPException(400, "Codebook 最多可輸入 12,000 個字元")
-    conn = get_db()
-    updated = conn.execute(
-        "UPDATE projects SET annotation_instructions=? WHERE id=?",
-        (instructions, project_id),
-    )
-    if updated.rowcount == 0:
-        conn.close()
-        raise HTTPException(404, "Project not found")
-    conn.commit()
-    conn.close()
+    with get_db() as conn:
+        updated = conn.execute(
+            "UPDATE projects SET annotation_instructions=? WHERE id=?",
+            (instructions, project_id),
+        )
+        if updated.rowcount == 0:
+            raise HTTPException(404, "Project not found")
+        conn.commit()
     return {"annotation_instructions": effective_project_instructions(instructions)}
 
 
 @router.get("/{project_id}/llm-config")
 def get_llm_config(project_id: int, _: CurrentUser = Depends(get_current_user)):
     from ..llm.prompt_builder import DEFAULT_TEMPLATE
-    conn = get_db()
-    proj = conn.execute(
-        "SELECT llm_config, annotation_instructions FROM projects WHERE id=?", (project_id,)
-    ).fetchone()
-    conn.close()
+    with get_db() as conn:
+        proj = conn.execute(
+            "SELECT llm_config, annotation_instructions FROM projects WHERE id=?", (project_id,)
+        ).fetchone()
     if not proj:
         raise HTTPException(404, "Project not found")
     config: dict = {}
@@ -424,22 +413,21 @@ def get_llm_config(project_id: int, _: CurrentUser = Depends(get_current_user)):
 
 @router.patch("/{project_id}/llm-config")
 def update_llm_config(project_id: int, body: LLMConfigUpdate, _: CurrentUser = Depends(get_current_user)):
-    conn = get_db()
-    proj = conn.execute("SELECT llm_config FROM projects WHERE id=?", (project_id,)).fetchone()
-    existing_key = ""
-    if proj and proj["llm_config"]:
-        try:
-            existing_key = json.loads(proj["llm_config"]).get("api_key", "")
-        except Exception:
-            pass
-    payload = body.model_dump()
-    payload["api_key"] = _resolve_api_key(payload["api_key"], existing_key)
-    conn.execute(
-        "UPDATE projects SET llm_config=? WHERE id=?",
-        (json.dumps(payload, ensure_ascii=False), project_id),
-    )
-    conn.commit()
-    conn.close()
+    with get_db() as conn:
+        proj = conn.execute("SELECT llm_config FROM projects WHERE id=?", (project_id,)).fetchone()
+        existing_key = ""
+        if proj and proj["llm_config"]:
+            try:
+                existing_key = json.loads(proj["llm_config"]).get("api_key", "")
+            except Exception:
+                pass
+        payload = body.model_dump()
+        payload["api_key"] = _resolve_api_key(payload["api_key"], existing_key)
+        conn.execute(
+            "UPDATE projects SET llm_config=? WHERE id=?",
+            (json.dumps(payload, ensure_ascii=False), project_id),
+        )
+        conn.commit()
     payload["has_api_key"] = bool(payload.get("api_key"))
     payload["api_key"] = _mask_api_key(payload.get("api_key") or "")
     return payload
@@ -449,22 +437,20 @@ def update_llm_config(project_id: int, body: LLMConfigUpdate, _: CurrentUser = D
 def preview_prompt(project_id: int, _: CurrentUser = Depends(get_current_user)):
     from ..llm.example_selector import select_examples
     from ..llm.prompt_builder import build_prompt
-    conn = get_db()
-    proj = conn.execute(
-        "SELECT llm_config, annotation_instructions FROM projects WHERE id=?", (project_id,)
-    ).fetchone()
-    if not proj:
-        conn.close()
-        raise HTTPException(404, "Project not found")
-    cfg: dict = {}
-    if proj["llm_config"]:
-        try:
-            cfg = json.loads(proj["llm_config"])
-        except Exception:
-            pass
-    examples = select_examples(conn, project_id, cfg)
-    project_instructions = proj["annotation_instructions"] or ""
-    conn.close()
+    with get_db() as conn:
+        proj = conn.execute(
+            "SELECT llm_config, annotation_instructions FROM projects WHERE id=?", (project_id,)
+        ).fetchone()
+        if not proj:
+            raise HTTPException(404, "Project not found")
+        cfg: dict = {}
+        if proj["llm_config"]:
+            try:
+                cfg = json.loads(proj["llm_config"])
+            except Exception:
+                pass
+        examples = select_examples(conn, project_id, cfg)
+        project_instructions = proj["annotation_instructions"] or ""
     sample_comment = "這個活動辦得很好，謝謝主辦單位的用心！"
     prompt = build_prompt(
         cfg.get("prompt_template", ""), examples, sample_comment, project_instructions
@@ -475,9 +461,8 @@ def preview_prompt(project_id: int, _: CurrentUser = Depends(get_current_user)):
 @router.get("/{project_id}/llm-models")
 def list_llm_models(project_id: int, _: CurrentUser = Depends(get_current_user)):
     from ..llm.client import list_models
-    conn = get_db()
-    proj = conn.execute("SELECT llm_config FROM projects WHERE id=?", (project_id,)).fetchone()
-    conn.close()
+    with get_db() as conn:
+        proj = conn.execute("SELECT llm_config FROM projects WHERE id=?", (project_id,)).fetchone()
     if not proj or not proj["llm_config"]:
         return []
     try:
@@ -500,55 +485,52 @@ class AdoptSlotBody(BaseModel):
 def adopt_slot(project_id: int, body: AdoptSlotBody, _: CurrentUser = Depends(get_current_user)):
     if body.slot not in (1, 2, 3):
         raise HTTPException(400, "slot 必須是 1、2 或 3")
-    conn = get_db()
-    extra = "AND r.status = 'pending'" if body.target == "pending" else ""
-    results = conn.execute(
-        f"""SELECT rlr.row_id, rlr.relevance, rlr.labels, rlr.subtypes
-            FROM row_llm_results rlr
-            JOIN rows r ON r.id = rlr.row_id
-            WHERE rlr.slot = ? AND r.project_id = ? {extra}""",
-        (body.slot, project_id),
-    ).fetchall()
-    params = [(r["relevance"], r["labels"], r["subtypes"], r["row_id"]) for r in results]
-    if params:
-        conn.executemany(
-            """UPDATE rows SET
-               corrected_relevance=?, corrected_labels=?, corrected_emotional_subtypes=?,
-               status='corrected', reviewed_at=datetime('now','localtime')
-               WHERE id=?""",
-            params,
-        )
-    updated = len(params)
-    conn.commit()
-    conn.close()
+    with get_db() as conn:
+        extra = "AND r.status = 'pending'" if body.target == "pending" else ""
+        results = conn.execute(
+            f"""SELECT rlr.row_id, rlr.relevance, rlr.labels, rlr.subtypes
+                FROM row_llm_results rlr
+                JOIN rows r ON r.id = rlr.row_id
+                WHERE rlr.slot = ? AND r.project_id = ? {extra}""",
+            (body.slot, project_id),
+        ).fetchall()
+        params = [(r["relevance"], r["labels"], r["subtypes"], r["row_id"]) for r in results]
+        if params:
+            conn.executemany(
+                """UPDATE rows SET
+                   corrected_relevance=?, corrected_labels=?, corrected_emotional_subtypes=?,
+                   status='corrected', reviewed_at=datetime('now','localtime')
+                   WHERE id=?""",
+                params,
+            )
+        updated = len(params)
+        conn.commit()
     return {"updated": updated}
 
 
 @router.delete("/{project_id}")
 def delete_project(project_id: int, _: CurrentUser = Depends(get_current_user)):
-    conn = get_db()
-    conn.execute("DELETE FROM projects WHERE id=?", (project_id,))
-    conn.commit()
-    conn.close()
+    with get_db() as conn:
+        conn.execute("DELETE FROM projects WHERE id=?", (project_id,))
+        conn.commit()
     return {"ok": True}
 
 
 @router.get("/{project_id}")
 def get_project(project_id: int, _: CurrentUser = Depends(get_current_user)):
     from ..llm.prompt_builder import effective_project_instructions
-    conn = get_db()
-    proj = conn.execute("""
-        SELECT p.*,
-               SUM(CASE WHEN r.status = 'approved'  THEN 1 ELSE 0 END) as approved,
-               SUM(CASE WHEN r.status = 'corrected' THEN 1 ELSE 0 END) as corrected,
-               SUM(CASE WHEN r.status = 'uncertain' THEN 1 ELSE 0 END) as uncertain,
-               SUM(CASE WHEN r.status = 'pending'   THEN 1 ELSE 0 END) as pending
-        FROM projects p
-        LEFT JOIN rows r ON r.project_id = p.id
-        WHERE p.id = ?
-        GROUP BY p.id
-    """, (project_id,)).fetchone()
-    conn.close()
+    with get_db() as conn:
+        proj = conn.execute("""
+            SELECT p.*,
+                   SUM(CASE WHEN r.status = 'approved'  THEN 1 ELSE 0 END) as approved,
+                   SUM(CASE WHEN r.status = 'corrected' THEN 1 ELSE 0 END) as corrected,
+                   SUM(CASE WHEN r.status = 'uncertain' THEN 1 ELSE 0 END) as uncertain,
+                   SUM(CASE WHEN r.status = 'pending'   THEN 1 ELSE 0 END) as pending
+            FROM projects p
+            LEFT JOIN rows r ON r.project_id = p.id
+            WHERE p.id = ?
+            GROUP BY p.id
+        """, (project_id,)).fetchone()
     if not proj:
         raise HTTPException(404, "Project not found")
     result = dict(proj)
