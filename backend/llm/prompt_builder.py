@@ -56,11 +56,12 @@ DEFAULT_TEMPLATE = """你是一個嚴格依照人工 codebook 執行的留言標
 【Emotional Resonance subtypes】
 情緒子類型是 Emotional Resonance 的下一層分類，兩者不可分開使用：
 - 只有先標記 Emotional Resonance，才可以標記任何情緒子類型。
-- 若有任何情緒子類型，labels 必須同時包含 Emotional Resonance。
-- 單有 Emotional Resonance 時可以沒有子類型；但不可只輸出子類型。
+- 若有任何情緒子類型，labels 必須同時包含 Emotional Resonance；不可只輸出子類型而缺少 Emotional Resonance。
 - 每筆可選擇一個以上的子類型，保留留言中明確可辨識的複合情緒。
+- 只要標記了 Emotional Resonance，就必須同時附上至少一個子類型：能對應到明確情緒就選對應子類型；
+  如果確定有情緒反應、但無法判斷屬於下列哪一種，選「未確定」，不要略過子類型或勉強套用不相符的子類。
 
-若標記 Emotional Resonance，盡量同時指出子類：
+若標記 Emotional Resonance，請從下列子類型中擇一或多個：
 - Satisfied and Pleased
 - Excited and Proud
 - Touched and Inspired
@@ -71,6 +72,7 @@ DEFAULT_TEMPLATE = """你是一個嚴格依照人工 codebook 執行的留言標
 - Scared and Vulnerable
 - Regretful and Missing
 - Grateful and Heartfelt
+- 未確定（已確定有情緒反應，但無法判斷屬於以上何種子類型時使用）
 
 【Step 4: Other fallback】
 如果留言與貼文相關，但不符合任何上述類別，labels 輸出空陣列，reason 說明原因。
@@ -104,8 +106,11 @@ COMMENTS_CONTENT: {comment}
 如果相關：
 {{"relevance": "相關", "labels": ["Words of Affirmation", "Emotional Resonance"], "emotional_subtypes": ["Excited and Proud"], "reason": "1-2 句簡短說明"}}
 
+如果相關，且有 Emotional Resonance 但判斷不出具體子類型：
+{{"relevance": "相關", "labels": ["Emotional Resonance"], "emotional_subtypes": ["未確定"], "reason": "1-2 句簡短說明"}}
+
 可用標籤：Words of Affirmation, Quality Time, Acts of Service, Tangible Gifts, Physical Touch, Mirroring, Emotional Resonance
-可用情感子類型：Satisfied and Pleased, Excited and Proud, Touched and Inspired, Loved and Warm, Accepted and Supported, Hopeful and Expectant, Relaxed and Fun, Scared and Vulnerable, Regretful and Missing, Grateful and Heartfelt"""
+可用情感子類型：Satisfied and Pleased, Excited and Proud, Touched and Inspired, Loved and Warm, Accepted and Supported, Hopeful and Expectant, Relaxed and Fun, Scared and Vulnerable, Regretful and Missing, Grateful and Heartfelt, 未確定"""
 
 # 規則本身與 prompt 外殼分開管理：規則可覆寫為每個專案自己的 Codebook，
 # 範例、待判斷留言與 JSON 輸出要求則維持平台的一致性。

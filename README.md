@@ -12,8 +12,8 @@
   規則會同時套用到內建 LLM 任務、MCP Agent 批次分類，以及人工複查的手動修正。
 - Emotional Resonance 與其情緒子類型的階層規則，現在在 LLM 產出、MCP 批次送出與人工修正
   三個路徑都會一致驗證：沒有 Emotional Resonance 就不能有子類型。
-- 情感子類型新增「未確定」選項，供複查者標記「確定有情緒反應、但無法判斷具體子類型」；
-  這是純人工複查用的選項，未寫入 LLM prompt／專案 Codebook，AI 分類不會自動產生此值。
+- 情感子類型新增「未確定」選項：確定為 Emotional Resonance、但無法判斷屬於哪一個具體子類型時使用。
+  已寫入預設 LLM prompt／專案 Codebook 規則，AI 分類與人工複查都可以選用；
   另補上先前已上線但未寫入文件的「Grateful and Heartfelt」子類型。
 - 修正情感子類型標籤只顯示第一個英文字（如 `Satisfied`）的問題，處理頁與 LLM 比對結果
   現在都會顯示完整子類型名稱。
