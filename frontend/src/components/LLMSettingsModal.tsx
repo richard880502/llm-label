@@ -302,6 +302,11 @@ function SlotTaskHistory({ slotName, tasks, onCancel, onDelete }: {
 
 export default function LLMSettingsModal({ projectId: pid, open, onClose, onTasksChanged }: Props) {
   const [slots, setSlots] = useState<Record<number, SlotCfg>>({ 1: EMPTY, 2: EMPTY, 3: EMPTY })
+  const [annotationInstructions, setAnnotationInstructions] = useState('')
+  const [savedAnnotationInstructions, setSavedAnnotationInstructions] = useState('')
+  const [correctedExamples, setCorrectedExamples] = useState(0)
+  const [savingInstructions, setSavingInstructions] = useState(false)
+  const [instructionsMessage, setInstructionsMessage] = useState<string | null>(null)
   const [tasks, setTasks] = useState<Task[]>([])
   const [runningBySlot, setRunningBySlot] = useState<Record<number, Task | null>>({})
   const [selectedSlots, setSelectedSlots] = useState<number[]>([1, 2, 3])
@@ -350,6 +355,12 @@ export default function LLMSettingsModal({ projectId: pid, open, onClose, onTask
       cfgs.forEach(c => { next[c.slot] = { name: c.name, api_url: c.api_url, api_key: c.api_key, model: c.model, prompt_template: c.prompt_template, examples_mode: c.examples_mode, examples_per_label: c.examples_per_label, concurrency: c.concurrency ?? 1, extra_body: c.extra_body ?? '', has_api_key: c.has_api_key ?? false } })
       setSlots(next)
     }).catch(() => {})
+    api.getProject(pid).then(project => {
+      const instructions = project.annotation_instructions || ''
+      setAnnotationInstructions(instructions)
+      setSavedAnnotationInstructions(instructions)
+      setCorrectedExamples(project.corrected || 0)
+    }).catch(() => {})
     loadTasks()
     api.listApiTokens().then(setApiTokens).catch(() => {})
   }, [open, pid])
@@ -376,6 +387,7 @@ export default function LLMSettingsModal({ projectId: pid, open, onClose, onTask
     if (toRun.length === 0) return
     setStartingSlots(toRun); setTaskError(null)
     try {
+      if (annotationInstructions !== savedAnnotationInstructions) await saveInstructions()
       for (const slot of toRun) {
         await saveCfg(slot)
         await api.createTask(pid, {
@@ -390,6 +402,7 @@ export default function LLMSettingsModal({ projectId: pid, open, onClose, onTask
   const handleStartMcpTask = async () => {
     setStartingSlots([mcpSlot]); setTaskError(null); setCreatedMcpTask(null)
     try {
+      if (annotationInstructions !== savedAnnotationInstructions) await saveInstructions()
       const task = await api.createTask(pid, {
         target: taskTarget, slot: mcpSlot, execution_mode: 'mcp', executor_name: mcpAgent,
       })
@@ -397,6 +410,20 @@ export default function LLMSettingsModal({ projectId: pid, open, onClose, onTask
       loadTasks()
     } catch (e: unknown) { setTaskError(e instanceof Error ? e.message : String(e)) }
     finally { setStartingSlots([]) }
+  }
+
+  const saveInstructions = async () => {
+    setSavingInstructions(true); setInstructionsMessage(null)
+    try {
+      const result = await api.updateAnnotationInstructions(pid, annotationInstructions)
+      setAnnotationInstructions(result.annotation_instructions)
+      setSavedAnnotationInstructions(result.annotation_instructions)
+      setInstructionsMessage('Codebook 已儲存；下一個任務會使用最新版。')
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e)
+      setInstructionsMessage(`儲存失敗：${message}`)
+      throw e
+    } finally { setSavingInstructions(false) }
   }
 
   const createAccessToken = async () => {
@@ -477,6 +504,29 @@ export default function LLMSettingsModal({ projectId: pid, open, onClose, onTask
         </DialogHeader>
 
         <div className="overflow-y-auto flex-1 px-6 py-5 space-y-6">
+          <section className="rounded-xl border border-teal-200 dark:border-teal-900 bg-teal-50/40 dark:bg-teal-950/10 p-4 space-y-3">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-teal-700 dark:text-teal-300">專案 Codebook／Agent 指示</p>
+              <p className="text-sm text-muted-foreground mt-1">
+                這是此專案目前生效的完整規則。直接修改並儲存後，所有平台 API 與 MCP 任務都會使用此版本，以及精選的人工作答案例。
+                目前可作為 few-shot 的已修正案例：{correctedExamples} 筆。
+              </p>
+            </div>
+            <textarea value={annotationInstructions} onChange={e => setAnnotationInstructions(e.target.value)}
+              rows={18} maxLength={12000}
+              aria-label="專案 Codebook 完整規則"
+              className="w-full border border-input bg-card text-foreground placeholder:text-muted-foreground rounded-lg px-3 py-2 text-sm resize-y focus:outline-none focus:ring-2 focus:ring-teal-500/30 focus:border-teal-500" />
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-xs text-muted-foreground">{annotationInstructions.length.toLocaleString()} / 12,000 字元</p>
+              <Button variant="outline" size="sm" onClick={saveInstructions} disabled={savingInstructions || annotationInstructions === savedAnnotationInstructions}>
+                {savingInstructions ? '儲存中…' : '儲存 Codebook'}
+              </Button>
+            </div>
+            {instructionsMessage && <p className={`text-xs ${instructionsMessage.startsWith('儲存失敗') ? 'text-destructive' : 'text-emerald-600 dark:text-emerald-400'}`}>{instructionsMessage}</p>}
+          </section>
+
+          <Separator />
+
           <section className="space-y-2">
             <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">LLM 設定</p>
             {([1, 2, 3] as const).map(slot => (

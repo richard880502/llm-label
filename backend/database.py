@@ -188,7 +188,8 @@ SCHEMA_STATEMENTS = [
         filename    TEXT NOT NULL,
         created_at  TEXT DEFAULT to_char(CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Taipei', 'YYYY-MM-DD HH24:MI:SS'),
         total_rows  INTEGER DEFAULT 0,
-        llm_config  TEXT
+        llm_config  TEXT,
+        annotation_instructions TEXT NOT NULL DEFAULT ''
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_projects_created_at ON projects(created_at DESC)",
@@ -354,6 +355,11 @@ def init_db(*, seed_admin: bool = True) -> None:
     try:
         for statement in SCHEMA_STATEMENTS:
             conn.execute(statement)
+        # CREATE TABLE IF NOT EXISTS 不會替既有資料庫補欄位；部署新版本時以
+        # ADD COLUMN IF NOT EXISTS 保留既有專案與資料。
+        conn.execute(
+            "ALTER TABLE projects ADD COLUMN IF NOT EXISTS annotation_instructions TEXT NOT NULL DEFAULT ''"
+        )
         _fix_pipe_labels(conn)
         if seed_admin:
             _ensure_admin(conn)

@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from ..auth import CurrentUser, get_current_user
 from ..database import get_db
+from ..llm.classifier import ALLOWED_LABELS, ALLOWED_SUBTYPES, has_valid_emotional_hierarchy
 
 router = APIRouter()
 
@@ -288,6 +289,14 @@ def update_row(
 ):
     if body.status is not None and body.status not in VALID_ROW_STATUSES:
         raise HTTPException(400, "Invalid request")
+    if body.corrected_labels is not None:
+        unknown_labels = set(body.corrected_labels) - ALLOWED_LABELS
+        if unknown_labels:
+            raise HTTPException(400, f"含不允許的標籤：{sorted(unknown_labels)}")
+    if body.corrected_emotional_subtypes is not None:
+        unknown_subtypes = set(body.corrected_emotional_subtypes) - ALLOWED_SUBTYPES
+        if unknown_subtypes:
+            raise HTTPException(400, f"含不允許的情緒子類型：{sorted(unknown_subtypes)}")
 
     conn = get_db()
     row = conn.execute(
@@ -296,6 +305,19 @@ def update_row(
     if not row:
         conn.close()
         raise HTTPException(404, "Row not found")
+
+    if body.corrected_emotional_subtypes is not None:
+        # 若這次同時送 labels，以該值驗證；只有更新子類型時，則沿用既有 labels。
+        labels_for_hierarchy = body.corrected_labels
+        if labels_for_hierarchy is None:
+            raw_labels = row["corrected_labels"] or row["ai_labels"] or "[]"
+            try:
+                labels_for_hierarchy = json.loads(raw_labels)
+            except (TypeError, json.JSONDecodeError):
+                labels_for_hierarchy = []
+        if not has_valid_emotional_hierarchy(labels_for_hierarchy or [], body.corrected_emotional_subtypes):
+            conn.close()
+            raise HTTPException(400, "情緒子類型必須同時標記 Emotional Resonance")
 
     if body.version is not None and (row["version"] or 0) != body.version:
         conn.close()
