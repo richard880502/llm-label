@@ -29,9 +29,10 @@
   另補上先前已上線但未寫入文件的「Grateful and Heartfelt」子類型。
 - 修正情感子類型標籤只顯示第一個英文字（如 `Satisfied`）的問題，處理頁與 LLM 比對結果
   現在都會顯示完整子類型名稱。
-- 修正 PostgreSQL connection pool 洩漏：所有路由改用 context manager 存取資料庫連線，
-  例外發生時保證連線會歸還 pool；新增 pool/session 逾時設定與逾時時的 503 錯誤處理，
-  避免連線耗盡導致 `/api/projects` 等 API 整個失敗。
+- 修正 PostgreSQL connection pool 洩漏與背景 LLM 任務長時間佔用連線：所有路由改用 context
+  manager，LLM 等待期間會釋放連線；預設 pool 提升為 4–40 條，並可用
+  `DB_POOL_MIN_SIZE`、`DB_POOL_MAX_SIZE`、`DB_POOL_TIMEOUT_SECONDS` 調整，避免多人網頁、MCP
+  與背景分類同時使用時導致 `/api/projects` 等 API 變慢或耗盡。
 - MCP server 固定在 `mcp>=1.2.0,<2.0.0`，並限制相容的 `sse-starlette`，避免升級到會移除
   `FastMCP` 匯入路徑的 2.x 版本或在映像建置時發生 Starlette 相依衝突。
 

@@ -14,6 +14,24 @@ DATABASE_URL = os.getenv(
     "postgresql://annotation:annotation-local-password@localhost:5433/annotation",
 )
 
+
+def _positive_int_env(name: str, default: int) -> int:
+    """Read a positive integer setting without making a bad env var break startup."""
+
+    try:
+        value = int(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+# A web request, MCP auth request, and background classifier can all query
+# PostgreSQL concurrently. Keep this independently configurable for a small
+# local database or a larger production service.
+DB_POOL_MIN_SIZE = _positive_int_env("DB_POOL_MIN_SIZE", 4)
+DB_POOL_MAX_SIZE = max(DB_POOL_MIN_SIZE, _positive_int_env("DB_POOL_MAX_SIZE", 40))
+DB_POOL_TIMEOUT_SECONDS = _positive_int_env("DB_POOL_TIMEOUT_SECONDS", 20)
+
 _NOW_SQL = (
     "to_char(CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Taipei', "
     "'YYYY-MM-DD HH24:MI:SS')"
@@ -167,9 +185,9 @@ def _get_pool() -> ConnectionPool:
     if _pool is None:
         _pool = ConnectionPool(
             DATABASE_URL,
-            min_size=2,
-            max_size=20,
-            timeout=10,
+            min_size=DB_POOL_MIN_SIZE,
+            max_size=DB_POOL_MAX_SIZE,
+            timeout=DB_POOL_TIMEOUT_SECONDS,
             max_idle=300,
             max_lifetime=1800,
             kwargs={
