@@ -10,6 +10,7 @@ from .auth import get_current_user
 from .database import init_db
 from .routers import export, projects, rows
 from .routers import auth as auth_router
+from .routers import oauth as oauth_router
 from .routers import tasks as tasks_router
 from .routers import users as users_router
 from .routers import presence as presence_router
@@ -38,6 +39,7 @@ def on_startup():
 
 
 app.include_router(auth_router.router, prefix="/api/auth", tags=["auth"])
+app.include_router(oauth_router.router, prefix="/api/oauth", tags=["oauth"])
 app.include_router(
     users_router.router,
     prefix="/api/users",
@@ -74,6 +76,48 @@ app.include_router(
     tags=["presence"],
     dependencies=[Depends(get_current_user)],
 )
+
+
+def _public_origin(request: Request) -> str:
+    """Use the externally visible origin when TLS terminates at a proxy."""
+    proto = request.headers.get("x-forwarded-proto", request.url.scheme).split(",")[0].strip()
+    host = request.headers.get("x-forwarded-host", request.headers.get("host", request.url.netloc)).split(",")[0].strip()
+    return f"{proto}://{host}"
+
+
+@app.get("/.well-known/oauth-protected-resource/mcp", include_in_schema=False)
+@app.get("/.well-known/oauth-protected-resource", include_in_schema=False)
+def oauth_protected_resource_metadata(request: Request):
+    origin = _public_origin(request)
+    return {
+        "resource": f"{origin}/mcp",
+        "authorization_servers": [origin],
+        "scopes_supported": [
+            "projects:read", "rows:read", "tasks:read", "tasks:run", "rows:write",
+            "reviews:approve", "reviews:batch_approve", "offline_access",
+        ],
+        "bearer_methods_supported": ["header"],
+    }
+
+
+@app.get("/.well-known/oauth-authorization-server", include_in_schema=False)
+def oauth_authorization_server_metadata(request: Request):
+    origin = _public_origin(request)
+    return {
+        "issuer": origin,
+        "authorization_endpoint": f"{origin}/oauth/authorize",
+        "token_endpoint": f"{origin}/api/oauth/token",
+        "registration_endpoint": f"{origin}/api/oauth/register",
+        "revocation_endpoint": f"{origin}/api/oauth/revoke",
+        "response_types_supported": ["code"],
+        "grant_types_supported": ["authorization_code", "refresh_token"],
+        "code_challenge_methods_supported": ["S256"],
+        "token_endpoint_auth_methods_supported": ["none"],
+        "scopes_supported": [
+            "projects:read", "rows:read", "tasks:read", "tasks:run", "rows:write",
+            "reviews:approve", "reviews:batch_approve", "offline_access",
+        ],
+    }
 
 static_path = Path(__file__).parent.parent / "static"
 if static_path.exists():

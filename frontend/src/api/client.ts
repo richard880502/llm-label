@@ -132,6 +132,11 @@ export interface ApiToken {
   token?: string
 }
 
+export interface McpOAuthConnection {
+  id: number; client_name: string; scopes: string; project_ids: string
+  created_at: string; last_used_at?: string | null
+}
+
 export const api = {
   // auth
   getAuthConfig: () => request<{ google_client_id: string }>('/auth/config'),
@@ -179,6 +184,12 @@ export const api = {
     body: JSON.stringify({ name }),
   }),
   revokeApiToken: (id: number) => request<{ ok: boolean }>(`/auth/tokens/${id}`, { method: 'DELETE' }),
+  getOAuthAuthorizationInfo: (clientId: string, redirectUri: string, scope: string) =>
+    request<{ client_name: string; requested_scopes: string[] }>(`/oauth/authorize-info?${new URLSearchParams({ client_id: clientId, redirect_uri: redirectUri, scope })}`),
+  completeOAuthAuthorization: (body: { client_id: string; redirect_uri: string; code_challenge: string; code_challenge_method: string; scope: string; resource: string; approved_scopes: string[]; project_ids: number[] }) =>
+    request<{ code: string }>('/oauth/authorize/complete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
+  listMcpOAuthConnections: () => request<McpOAuthConnection[]>('/oauth/connections'),
+  revokeMcpOAuthConnection: (id: number) => request<{ ok: boolean }>(`/oauth/connections/${id}`, { method: 'DELETE' }),
 
   // users (admin)
   listUsers: () => request<User[]>('/users'),

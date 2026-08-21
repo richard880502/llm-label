@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { GoogleOAuthProvider, GoogleLogin } from '@react-oauth/google'
 import { api } from '../api/client'
 import { useAuth } from '../context/AuthContext'
@@ -8,6 +8,7 @@ import { useDarkMode } from '../hooks/useDarkMode'
 
 export default function LoginPage() {
   const navigate = useNavigate()
+  const location = useLocation()
   const { setUser } = useAuth()
   const { isDark, toggle } = useDarkMode()
 
@@ -34,7 +35,8 @@ export default function LoginPage() {
   const onLoginSuccess = (token: string, username: string, role: string) => {
     localStorage.setItem('token', token)
     setUser({ username, role })
-    navigate('/', { replace: true })
+    const next = new URLSearchParams(location.search).get('next')
+    navigate(next && next.startsWith('/') ? next : '/', { replace: true })
   }
 
   const handleSubmit = async (e: React.FormEvent) => {

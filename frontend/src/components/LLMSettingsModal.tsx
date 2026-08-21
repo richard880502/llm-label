@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { api, ApiToken, LLMSlotConfig, Task } from '../api/client'
+import { api, ApiToken, LLMSlotConfig, McpOAuthConnection, Task } from '../api/client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -318,6 +318,7 @@ export default function LLMSettingsModal({ projectId: pid, open, onClose, onTask
   const [mcpSlot, setMcpSlot] = useState(1)
   const [createdMcpTask, setCreatedMcpTask] = useState<Task | null>(null)
   const [apiTokens, setApiTokens] = useState<ApiToken[]>([])
+  const [mcpConnections, setMcpConnections] = useState<McpOAuthConnection[]>([])
   const [newToken, setNewToken] = useState('')
   const [newTokenId, setNewTokenId] = useState<number | null>(null)
   const [tokenBusy, setTokenBusy] = useState(false)
@@ -363,6 +364,7 @@ export default function LLMSettingsModal({ projectId: pid, open, onClose, onTask
     }).catch(() => {})
     loadTasks()
     api.listApiTokens().then(setApiTokens).catch(() => {})
+    api.listMcpOAuthConnections().then(setMcpConnections).catch(() => {})
   }, [open, pid])
 
   useEffect(() => {
@@ -446,6 +448,14 @@ export default function LLMSettingsModal({ projectId: pid, open, onClose, onTask
         setNewTokenId(null)
       }
       setApiTokens(await api.listApiTokens())
+    } catch (e: unknown) { setTaskError(e instanceof Error ? e.message : String(e)) }
+  }
+
+  const revokeMcpConnection = async (id: number) => {
+    if (!window.confirm('確定撤銷這個 GUI MCP 連線？該 Codex／ChatGPT App 將立即無法繼續使用。')) return
+    try {
+      await api.revokeMcpOAuthConnection(id)
+      setMcpConnections(await api.listMcpOAuthConnections())
     } catch (e: unknown) { setTaskError(e instanceof Error ? e.message : String(e)) }
   }
 
@@ -641,8 +651,14 @@ export default function LLMSettingsModal({ projectId: pid, open, onClose, onTask
                 </div>
 
                 <div className="rounded-lg bg-card border border-border p-3 space-y-3">
+                  <div className="rounded-lg border border-violet-200 dark:border-violet-900 bg-violet-50/50 dark:bg-violet-950/20 p-3 space-y-2">
+                    <div><p className="text-sm font-medium">Codex／ChatGPT GUI App</p><p className="text-xs text-muted-foreground mt-0.5">推薦方式：在 Workspace Developer Mode 建立 Custom MCP App，填入下方 MCP URL。首次 Connect 會開啟平台登入與授權頁，不需要建立或複製權杖。</p></div>
+                    <div className="space-y-1"><Label className="text-xs">MCP URL</Label><div className="flex gap-2"><Input readOnly value={mcpUrl} className="font-mono text-xs" /><Button size="sm" variant="outline" onClick={() => copyText('oauth-url', mcpUrl)}>{copied === 'oauth-url' ? '已複製' : '複製'}</Button></div></div>
+                    {mcpConnections.length > 0 && <div className="space-y-1 pt-1"><p className="text-xs font-medium">已連線的 GUI Apps</p>{mcpConnections.map(connection => <div key={connection.id} className="flex items-center justify-between gap-3 rounded-md bg-card/80 px-2.5 py-1.5 text-xs"><span className="min-w-0 truncate"><span className="font-medium">{connection.client_name}</span><span className="ml-2 text-muted-foreground">{connection.scopes.replace(/offline_access/g, '維持連線')}</span></span><Button variant="ghost" size="xs" className="text-destructive" onClick={() => revokeMcpConnection(connection.id)}>撤銷</Button></div>)}</div>}
+                  </div>
+                  <Separator />
                   <div className="flex items-center justify-between gap-3">
-                    <div><p className="text-sm font-medium">MCP 存取權杖</p><p className="text-xs text-muted-foreground">目前有效權杖：{apiTokens.length} 個；新權杖只顯示一次。</p></div>
+                    <div><p className="text-sm font-medium">CLI／Developer access token</p><p className="text-xs text-muted-foreground">進階／舊版 client fallback。有效權杖：{apiTokens.length} 個；新權杖只顯示一次。</p></div>
                     <Button variant="outline" size="sm" onClick={createAccessToken} disabled={tokenBusy}>{tokenBusy ? '建立中…' : `建立 ${agentLabel} 權杖`}</Button>
                   </div>
                   {newToken && (
