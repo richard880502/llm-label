@@ -110,21 +110,47 @@ async def run_classification_task(
     target: str,
     slot: int,
 ) -> None:
-    conn = get_db()
-
     try:
         if task_id in _cancelled_tasks:
             # 任務還在排隊（狀態仍是 pending）就被取消，直接不執行；
             # 狀態已由 cancel_task 設為 failed，這裡不需再動。
             return
 
-        cfg = _load_slot_config(conn, project_id, slot)
-        if not cfg:
-            conn.execute(
-                "UPDATE tasks SET status='failed', error='找不到 LLM 設定', finished_at=datetime('now', 'localtime') WHERE id=?",
-                (task_id,),
-            )
+        # Do not retain a database connection while waiting for external LLM
+        # responses. A single task can wait minutes, and multiple tasks used to
+        # occupy the whole pool even though they were idle most of that time.
+        with get_db() as conn:
+            cfg = _load_slot_config(conn, project_id, slot)
+            if not cfg:
+                conn.execute(
+                    "UPDATE tasks SET status='failed', error='找不到 LLM 設定', finished_at=datetime('now', 'localtime') WHERE id=?",
+                    (task_id,),
+                )
+                conn.commit()
+                return
+
+            if target == "pending":
+                status_filter = "status = 'pending'"
+            else:
+                status_filter = "status IN ('pending', 'corrected')"
+
+            rows_to_process = conn.execute(
+                f"SELECT * FROM rows WHERE project_id=? AND {status_filter} ORDER BY source_row_number ASC",
+                (project_id,),
+            ).fetchall()
+            total = len(rows_to_process)
+            conn.execute("UPDATE tasks SET total=?, status='running' WHERE id=?", (total, task_id))
+            examples = select_examples(conn, project_id, cfg)
+            project = conn.execute(
+                "SELECT annotation_instructions FROM projects WHERE id=?", (project_id,)
+            ).fetchone()
+            project_instructions = project["annotation_instructions"] if project else ""
             conn.commit()
+
+        if total == 0:
+            with get_db() as conn:
+                conn.execute("UPDATE tasks SET status='done', finished_at=datetime('now', 'localtime') WHERE id=?", (task_id,))
+                conn.commit()
             return
 
         concurrency = max(1, int(cfg.get("concurrency") or 1))
@@ -144,31 +170,6 @@ async def run_classification_task(
                 extra_body = {}
         except Exception:
             extra_body = {}
-
-        if target == "pending":
-            status_filter = "status = 'pending'"
-        else:
-            status_filter = "status IN ('pending', 'corrected')"
-
-        rows_to_process = conn.execute(
-            f"SELECT * FROM rows WHERE project_id=? AND {status_filter} ORDER BY source_row_number ASC",
-            (project_id,),
-        ).fetchall()
-
-        total = len(rows_to_process)
-        conn.execute("UPDATE tasks SET total=?, status='running' WHERE id=?", (total, task_id))
-        conn.commit()
-
-        if total == 0:
-            conn.execute("UPDATE tasks SET status='done', finished_at=datetime('now', 'localtime') WHERE id=?", (task_id,))
-            conn.commit()
-            return
-
-        examples = select_examples(conn, project_id, cfg)
-        project = conn.execute(
-            "SELECT annotation_instructions FROM projects WHERE id=?", (project_id,)
-        ).fetchone()
-        project_instructions = project["annotation_instructions"] if project else ""
         processed_count = 0
         db_lock = asyncio.Lock()
         semaphore = asyncio.Semaphore(concurrency)
@@ -208,38 +209,39 @@ async def run_classification_task(
                     }
 
             async with db_lock:
-                conn.execute(
-                    """INSERT INTO row_llm_results
-                       (row_id, slot, source_name, relevance, labels, subtypes, reason, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
-                       ON CONFLICT (row_id, slot) DO UPDATE SET
-                           source_name=EXCLUDED.source_name,
-                           relevance=EXCLUDED.relevance,
-                           labels=EXCLUDED.labels,
-                           subtypes=EXCLUDED.subtypes,
-                           reason=EXCLUDED.reason,
-                           updated_at=EXCLUDED.updated_at""",
-                    (row["id"], slot, source_name, result["ai_relevance"], result["ai_labels"],
-                     result["ai_emotional_subtypes"], result["ai_reason"]),
-                )
-                # slot 1 also updates the primary ai_* columns for backward compat
-                if slot == 1:
+                with get_db() as conn:
                     conn.execute(
-                        """UPDATE rows SET ai_relevance=?, ai_labels=?, ai_emotional_subtypes=?, ai_reason=?,
-                                  llm_updated_at=datetime('now', 'localtime')
-                           WHERE id=?""",
-                        (result["ai_relevance"], result["ai_labels"],
-                         result["ai_emotional_subtypes"], result["ai_reason"],
-                         row["id"]),
+                        """INSERT INTO row_llm_results
+                           (row_id, slot, source_name, relevance, labels, subtypes, reason, updated_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
+                           ON CONFLICT (row_id, slot) DO UPDATE SET
+                               source_name=EXCLUDED.source_name,
+                               relevance=EXCLUDED.relevance,
+                               labels=EXCLUDED.labels,
+                               subtypes=EXCLUDED.subtypes,
+                               reason=EXCLUDED.reason,
+                               updated_at=EXCLUDED.updated_at""",
+                        (row["id"], slot, source_name, result["ai_relevance"], result["ai_labels"],
+                         result["ai_emotional_subtypes"], result["ai_reason"]),
                     )
-                else:
-                    conn.execute(
-                        "UPDATE rows SET llm_updated_at=datetime('now', 'localtime') WHERE id=?",
-                        (row["id"],),
-                    )
-                processed_count += 1
-                conn.execute("UPDATE tasks SET processed=? WHERE id=?", (processed_count, task_id))
-                conn.commit()
+                    # slot 1 also updates the primary ai_* columns for backward compat
+                    if slot == 1:
+                        conn.execute(
+                            """UPDATE rows SET ai_relevance=?, ai_labels=?, ai_emotional_subtypes=?, ai_reason=?,
+                                      llm_updated_at=datetime('now', 'localtime')
+                               WHERE id=?""",
+                            (result["ai_relevance"], result["ai_labels"],
+                             result["ai_emotional_subtypes"], result["ai_reason"],
+                             row["id"]),
+                        )
+                    else:
+                        conn.execute(
+                            "UPDATE rows SET llm_updated_at=datetime('now', 'localtime') WHERE id=?",
+                            (row["id"],),
+                        )
+                    processed_count += 1
+                    conn.execute("UPDATE tasks SET processed=? WHERE id=?", (processed_count, task_id))
+                    conn.commit()
 
         async def process_with_semaphore(row: DatabaseRow) -> None:
             async with semaphore:
@@ -251,21 +253,18 @@ async def run_classification_task(
             # 使用者已按停止；cancel_task 已把狀態設為 failed，這裡不覆蓋。
             return
 
-        conn.execute("UPDATE tasks SET status='done', finished_at=datetime('now', 'localtime') WHERE id=?", (task_id,))
-        conn.commit()
+        with get_db() as conn:
+            conn.execute("UPDATE tasks SET status='done', finished_at=datetime('now', 'localtime') WHERE id=?", (task_id,))
+            conn.commit()
 
     except Exception as e:
         if task_id in _cancelled_tasks:
             return
-        # The failing statement may have left the transaction aborted; without this,
-        # Postgres would reject the status-update below too (transaction is aborted,
-        # commands ignored until end of transaction block).
-        conn.rollback()
-        conn.execute(
-            "UPDATE tasks SET status='failed', error=?, finished_at=datetime('now', 'localtime') WHERE id=?",
-            (str(e), task_id),
-        )
-        conn.commit()
+        with get_db() as conn:
+            conn.execute(
+                "UPDATE tasks SET status='failed', error=?, finished_at=datetime('now', 'localtime') WHERE id=?",
+                (str(e), task_id),
+            )
+            conn.commit()
     finally:
         _cancelled_tasks.discard(task_id)
-        conn.close()
