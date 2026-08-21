@@ -21,7 +21,7 @@ services:
 
   app:
     build: .
-    image: annotation-app:0.3.0
+    image: annotation-app:4.0.0
     ports:
       - "127.0.0.1:8080:8080"
     environment:
@@ -56,7 +56,7 @@ services:
 
   mcp:
     build: ./mcp_server
-    image: annotation-mcp:0.2.0
+    image: annotation-mcp:4.0.0
     environment:
       ANNOTATION_API_URL: http://app:8080
       MCP_TRANSPORT: streamable-http

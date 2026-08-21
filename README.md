@@ -1,9 +1,21 @@
 # Annotation App
 
-**目前版本：v3.0.2**
+**目前版本：v4.0.0**
 
 多人協作的資料標注與複查平台。前端使用 React/Vite，後端使用 FastAPI，
 正式資料儲存在獨立 PostgreSQL 服務。
+
+## v4.0.0 更新重點
+
+- Remote MCP 現在支援標準 OAuth 2.1：Codex／ChatGPT GUI App 可從 `/mcp`
+  自動發現授權伺服器、以 PKCE 登入平台帳號，無須建立 `apt_` token 或設定環境變數。
+- OAuth access token 與網站登入 JWT、既有 PAT 完全分離；access token 一小時後過期，
+  `offline_access` 可安全輪替 refresh token，使用者可在 LLM 設定中直接撤銷 GUI 連線。
+- 新增分級 scope：專案／資料列／任務讀取與執行、資料列修改、單筆核准、批次核准。
+  預設連線只有讀取與分類任務權限；兩種核准權限均須在同意頁明確勾選。
+- GUI 連線可選擇限制至特定 project IDs；未授權 project 的工具呼叫會被拒絕。
+- LLM 設定將 GUI App 設為主要 MCP onboarding；`apt_` token 與 Codex／Claude CLI 指令保留於
+  **CLI／Developer** fallback。完整管理者流程見 [Custom MCP App 文件](docs/codex-custom-mcp-app.md)。
 
 ## v3.0.2 更新重點
 
@@ -20,7 +32,8 @@
 - 修正 PostgreSQL connection pool 洩漏：所有路由改用 context manager 存取資料庫連線，
   例外發生時保證連線會歸還 pool；新增 pool/session 逾時設定與逾時時的 503 錯誤處理，
   避免連線耗盡導致 `/api/projects` 等 API 整個失敗。
-- MCP server 依賴改為 `mcp>=1.2.0,<2.0.0`，避免升級到會移除 `FastMCP` 匯入路徑的 2.x 版本。
+- MCP server 固定在 `mcp>=1.2.0,<2.0.0`，並限制相容的 `sse-starlette`，避免升級到會移除
+  `FastMCP` 匯入路徑的 2.x 版本或在映像建置時發生 Starlette 相依衝突。
 
 ## v3.0.1 更新重點
 
@@ -63,7 +76,8 @@
 - App：`http://localhost:8080`
 - PostgreSQL：`localhost:5433`
 - Adminer：`http://localhost:8081`
-- MCP：App 映像在 `/mcp` 提供遠端 MCP；完整 Compose stack 也可使用獨立 MCP 服務
+- MCP：App 映像在 `/mcp` 提供遠端 MCP。公網部署時，此 endpoint 以 OAuth 2.1 保護；
+  GUI App 會自動發現授權設定，CLI 可繼續使用 PAT。
 - Caddy：只在需要本地 HTTPS／反向代理時啟動
 
 PostgreSQL 資料保存在 Docker named volume `annotation-app_annotation_db`，
@@ -142,6 +156,8 @@ docker compose exec -T db \
 - App 與 PostgreSQL 應部署成兩個獨立服務。
 - App 只透過私有 `DATABASE_URL` 連接 PostgreSQL。
 - Zeabur 的 App 映像會在同一個公開網域提供網站與 `/mcp`，資料庫仍維持獨立服務。
+- 正式網域必須使用公開 HTTPS；OAuth metadata 位於
+  `/.well-known/oauth-protected-resource/mcp` 與 `/.well-known/oauth-authorization-server`。
 - PostgreSQL 必須掛載持久化磁碟並設定定期備份。
 - 不要將 PostgreSQL port 直接開放到公網。
 - `SECRET_KEY`、管理員密碼與 API 金鑰必須使用平台的非公開環境變數。
@@ -149,6 +165,8 @@ docker compose exec -T db \
 
 ## 版本歷程
 
+- `v4.0.0`：Remote MCP 改用 OAuth 2.1 GUI onboarding，提供可撤銷、有期限的連線 token、
+  scope／project 限制與 ChatGPT Custom MCP App 管理文件；PAT／CLI 模式改為進階 fallback。
 - `v3.0.2`：新增專案 Codebook、情感子類型「未確定」、完整子類型顯示，並修復 DB connection pool 洩漏。
 - `v3.0.1`：優化總表分頁與相鄰筆數導覽的計數查詢。
 - `v3.0.0`：新增未確定狀態、前端查詢管理與 PostgreSQL 效能優化。

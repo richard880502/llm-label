@@ -8,6 +8,7 @@ import ProjectPage from './pages/ProjectPage'
 import ProjectSettingsPage from './pages/ProjectSettingsPage'
 import ReviewPage from './pages/ReviewPage'
 import UsersPage from './pages/UsersPage'
+import OAuthAuthorizePage from './pages/OAuthAuthorizePage'
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth()
@@ -30,6 +31,7 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/oauth/authorize" element={<OAuthAuthorizePage />} />
       <Route path="/" element={<RequireAuth><HomePage /></RequireAuth>} />
       <Route path="/projects/:projectId" element={<RequireAuth><ProjectPage /></RequireAuth>} />
       <Route path="/projects/:projectId/settings" element={<RequireAuth><ProjectSettingsPage /></RequireAuth>} />

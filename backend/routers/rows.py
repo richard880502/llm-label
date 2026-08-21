@@ -4,7 +4,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from ..auth import CurrentUser, get_current_user
+from ..auth import CurrentUser, get_current_user, require_scope
 from ..database import get_db
 from ..llm.classifier import ALLOWED_LABELS, ALLOWED_SUBTYPES, has_valid_emotional_hierarchy
 
@@ -224,6 +224,7 @@ def batch_update_rows(
     body: BatchUpdate,
     current_user: CurrentUser = Depends(get_current_user),
 ):
+    require_scope(current_user, "reviews:batch_approve")
     if body.status not in VALID_ROW_STATUSES:
         raise HTTPException(400, "Invalid request")
     with get_db() as conn:
@@ -280,6 +281,10 @@ def update_row(
     body: RowUpdate,
     current_user: CurrentUser = Depends(get_current_user),
 ):
+    if body.status == "approved":
+        require_scope(current_user, "reviews:approve")
+    else:
+        require_scope(current_user, "rows:write")
     if body.status is not None and body.status not in VALID_ROW_STATUSES:
         raise HTTPException(400, "Invalid request")
     if body.corrected_labels is not None:
