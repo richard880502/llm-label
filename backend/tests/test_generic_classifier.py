@@ -9,6 +9,7 @@ from backend.annotation.models import (
     SchemaConstraints,
 )
 from backend.llm.classifier_runtime import compatibility_projection, parse_response
+from backend.llm.client import normalize_llm_content
 from backend.llm.generic_prompt_builder import build_generic_prompt
 
 
@@ -95,6 +96,24 @@ def test_double_brace_legacy_response_is_recovered():
 
     assert parsed["fallback"] is False
     assert parsed["raw"] == raw
+    result = parsed["annotation_result"]
+    assert result.relevance == "related"
+    assert result.labels == [
+        "mirroring",
+        "emotional_resonance",
+        "hopeful_and_expectant",
+    ]
+
+
+def test_exact_runtime_response_with_markdown_escaped_underscore_is_recovered():
+    raw = r'{{"relevance": "相關", "labels": ["Mirroring", "Emotional Resonance"], "emotional\_subtypes": ["Hopeful and Expectant"], "reason": "留言者表示想學習老師教單字的方法，並表達期待與擔心來不及的情緒。"}}'
+    normalized = normalize_llm_content(raw)
+
+    assert 'emotional\\_subtypes' not in normalized
+    assert 'emotional_subtypes' in normalized
+
+    parsed = parse_response(normalized, fresh_legacy_schema())
+    assert parsed["fallback"] is False
     result = parsed["annotation_result"]
     assert result.relevance == "related"
     assert result.labels == [
