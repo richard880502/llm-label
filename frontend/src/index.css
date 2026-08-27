@@ -139,6 +139,31 @@ html.dark [data-slot="card"] {
     0 24px 64px oklch(0.3 0.1 255 / 0.18);
 }
 
+/* Long dialogs (such as the generic import flow) use a fixed header/footer
+   with only the middle body scrolling. min-height: 0 is required so the body
+   may shrink inside the viewport instead of forcing the whole dialog taller. */
+[data-slot="dialog-content"]:has(> .overflow-y-auto) {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+}
+
+[data-slot="dialog-content"] > .overflow-y-auto {
+  min-height: 0;
+  flex: 1 1 auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+[data-slot="dialog-content"]:has(> .overflow-y-auto) > [data-slot="dialog-header"],
+[data-slot="dialog-content"]:has(> .overflow-y-auto) > [data-slot="dialog-footer"] {
+  flex: 0 0 auto;
+}
+
+[data-slot="dialog-content"]:has(> .overflow-y-auto) > [data-slot="dialog-footer"] {
+  margin: 0;
+}
+
 html.dark [data-slot="dialog-content"] {
   box-shadow:
     0 0 0 1px oklch(1 0 0 / 0.08),
