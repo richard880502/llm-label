@@ -6,14 +6,16 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from psycopg_pool import PoolTimeout
 
+from .annotation.migrations import ensure_annotation_schema_columns
 from .auth import get_current_user
 from .database import init_db
 from .routers import export, projects, rows
 from .routers import auth as auth_router
 from .routers import oauth as oauth_router
+from .routers import presence as presence_router
+from .routers import schemas as schemas_router
 from .routers import tasks as tasks_router
 from .routers import users as users_router
-from .routers import presence as presence_router
 
 app = FastAPI(title="Annotation Review Platform")
 
@@ -36,6 +38,7 @@ async def pool_timeout_handler(request: Request, exc: PoolTimeout) -> JSONRespon
 @app.on_event("startup")
 def on_startup():
     init_db()
+    ensure_annotation_schema_columns()
 
 
 app.include_router(auth_router.router, prefix="/api/auth", tags=["auth"])
@@ -50,6 +53,12 @@ app.include_router(
     projects.router,
     prefix="/api/projects",
     tags=["projects"],
+    dependencies=[Depends(get_current_user)],
+)
+app.include_router(
+    schemas_router.router,
+    prefix="/api/projects",
+    tags=["schemas"],
     dependencies=[Depends(get_current_user)],
 )
 app.include_router(
