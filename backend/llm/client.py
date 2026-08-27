@@ -9,6 +9,22 @@ def _auth_headers(api_key: str) -> dict:
     return h
 
 
+def normalize_llm_content(content: str) -> str:
+    """Normalize harmless Markdown escaping before JSON parsing.
+
+    Some chat models escape underscores as ``\_`` even while otherwise returning
+    a JSON-shaped object (for example ``"emotional\_subtypes"``). ``\_`` is not
+    a legal JSON escape sequence, but removing that Markdown-only backslash does
+    not change the semantic text. Keep the normalization intentionally narrow so
+    genuinely malformed JSON still fails in the classifier parser.
+    """
+    if not isinstance(content, str):
+        return content
+    if "{" not in content or "}" not in content:
+        return content
+    return content.replace("\\_", "_")
+
+
 def call_llm(
     api_url: str,
     model: str,
@@ -33,7 +49,7 @@ def call_llm(
     )
     with urllib_request.urlopen(req, timeout=timeout) as resp:
         data = json.loads(resp.read())
-    return data["choices"][0]["message"]["content"]
+    return normalize_llm_content(data["choices"][0]["message"]["content"])
 
 
 def list_models(api_url: str, api_key: str = "", timeout: int = 10) -> list[str]:

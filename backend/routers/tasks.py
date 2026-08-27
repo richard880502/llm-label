@@ -1,21 +1,22 @@
 import asyncio
 import json
 import uuid
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from ..annotation.project_service import get_project_schema
 from ..auth import CurrentUser, get_current_user
 from ..database import get_db
 from ..llm.classifier import (
-    ALLOWED_LABELS,
-    ALLOWED_SUBTYPES,
-    has_valid_emotional_hierarchy,
+    compatibility_projection,
     mark_task_cancelled,
+    parse_response,
 )
 from ..llm.example_selector import select_examples
-from ..llm.prompt_builder import DEFAULT_TEMPLATE, build_prompt
+from ..llm.generic_prompt_builder import build_generic_prompt
+from ..llm.prompt_builder import DEFAULT_TEMPLATE
 
 router = APIRouter()
 
@@ -30,12 +31,17 @@ class CreateTaskRequest(BaseModel):
 
 
 class LabelingResult(BaseModel):
+    """Canonical MCP result with a temporary legacy compatibility field."""
+
     row_id: int
-    relevance: Literal["相關", "無關"]
-    labels: list[str] = []
-    emotional_subtypes: list[str] = []
+    relevance: str | None = None
+    labels: list[str] = Field(default_factory=list)
+    # Deprecated compatibility input. Generic projects should put every selected
+    # taxonomy node in labels; legacy agents may keep sending subtype names here.
+    emotional_subtypes: list[str] = Field(default_factory=list)
     reason: str = ""
     confidence: float | None = Field(default=None, ge=0, le=1)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class SubmitBatchRequest(BaseModel):
@@ -86,6 +92,27 @@ def _result_source_name(task) -> str:
     return executor_name or f"LLM {task['slot'] or 1}"
 
 
+def _mcp_result_contract(schema) -> dict:
+    relevance = None
+    if schema.relevance and schema.relevance.enabled:
+        relevance = {
+            "required": True,
+            "allowed_ids": [item.id for item in schema.relevance.values],
+        }
+    return {
+        "relevance": relevance,
+        "labels": {
+            "type": "array",
+            "allowed_ids": [label.id for label in schema.labels if label.enabled],
+        },
+        "reason": {"type": "string"},
+        "metadata": {"type": "object", "optional": True},
+        "legacy_compatibility": {
+            "emotional_subtypes": "accepted on submit but deprecated; use labels instead"
+        },
+    }
+
+
 @router.get("/{project_id}/tasks")
 def list_tasks(project_id: int, _: CurrentUser = Depends(get_current_user)):
     with get_db() as conn:
@@ -125,13 +152,23 @@ def create_task(
             raise HTTPException(400, f"結果槽 {body.slot} 已有任務執行中")
 
         initial_status = "pending" if body.execution_mode == "api" else "waiting_for_agent"
-        executor_name = body.executor_name.strip() or ("platform-api" if body.execution_mode == "api" else "codex")
+        executor_name = body.executor_name.strip() or (
+            "platform-api" if body.execution_mode == "api" else "codex"
+        )
         cur = conn.execute(
             """INSERT INTO tasks
                (project_id, slot, status, total, processed, failed, created_at,
                 execution_mode, executor_name, target, created_by, last_activity_at)
                VALUES (?, ?, ?, 0, 0, 0, datetime('now', 'localtime'), ?, ?, ?, ?, datetime('now', 'localtime'))""",
-            (project_id, body.slot, initial_status, body.execution_mode, executor_name, body.target, user.username),
+            (
+                project_id,
+                body.slot,
+                initial_status,
+                body.execution_mode,
+                executor_name,
+                body.target,
+                user.username,
+            ),
         )
         task_id = cur.lastrowid
 
@@ -212,6 +249,10 @@ def get_labeling_batch(
         elif task["claimed_by"] and task["claimed_by"] != user.username:
             raise HTTPException(409, f"任務已由 {task['claimed_by']} 領取")
 
+        schema = get_project_schema(conn, project_id)
+        schema_payload = schema.model_dump(mode="json")
+        result_contract = _mcp_result_contract(schema)
+
         conn.execute(
             """UPDATE task_items SET status='pending', lease_token=NULL, lease_expires_at=NULL
                WHERE task_id=? AND status='leased'
@@ -239,7 +280,14 @@ def get_labeling_batch(
                 )
             conn.commit()
             updated = _task_payload(conn, task_id)
-            return {"task": updated, "lease_token": None, "rows": [], "message": "目前沒有可領取的資料"}
+            return {
+                "task": updated,
+                "lease_token": None,
+                "rows": [],
+                "schema": schema_payload,
+                "result_contract": result_contract,
+                "message": "目前沒有可領取的資料",
+            }
 
         lease_token = uuid.uuid4().hex
         conn.executemany(
@@ -259,25 +307,39 @@ def get_labeling_batch(
         ).fetchone()
         project_instructions = project["annotation_instructions"] if project else ""
         prompt_template = cfg.get("prompt_template") or DEFAULT_TEMPLATE
-        rows = [
-            {
-                "row_id": row["id"],
-                "source_row_number": row["source_row_number"],
-                "content": row["content"] or "",
-                "comment": row["comment_content"] or "",
-                "version": row["version"] or 0,
-                "prompt": build_prompt(
-                    prompt_template,
-                    examples,
-                    row["comment_content"] or "",
-                    project_instructions,
-                ),
-            }
-            for row in items
-        ]
+
+        rows = []
+        for row in items:
+            primary_text = row["text"] or row["comment_content"] or ""
+            rows.append(
+                {
+                    "row_id": row["id"],
+                    "source_row_number": row["source_row_number"],
+                    "text": primary_text,
+                    # Keep old fields while external MCP clients migrate.
+                    "content": row["content"] or "",
+                    "comment": row["comment_content"] or "",
+                    "version": row["version"] or 0,
+                    "prompt": build_generic_prompt(
+                        prompt_template,
+                        examples,
+                        primary_text,
+                        project_instructions,
+                        schema,
+                    ),
+                }
+            )
+
         conn.commit()
         updated = _task_payload(conn, task_id)
-    return {"task": updated, "lease_token": lease_token, "lease_minutes": 5, "rows": rows}
+    return {
+        "task": updated,
+        "lease_token": lease_token,
+        "lease_minutes": 5,
+        "schema": schema_payload,
+        "result_contract": result_contract,
+        "rows": rows,
+    }
 
 
 @router.post("/{project_id}/tasks/{task_id}/batch")
@@ -293,6 +355,8 @@ def submit_labeling_batch(
             raise HTTPException(400, "任務目前不接受 MCP 結果")
         if task["claimed_by"] and task["claimed_by"] != user.username:
             raise HTTPException(409, f"任務已由 {task['claimed_by']} 領取")
+
+        schema = get_project_schema(conn, project_id)
 
         leased = conn.execute(
             """SELECT row_id FROM task_items WHERE task_id=? AND status='leased'
@@ -311,46 +375,88 @@ def submit_labeling_batch(
         llm_result_params = []
         rows_update_params = []
         task_item_params = []
+
         for result in body.results:
-            unknown_labels = set(result.labels) - ALLOWED_LABELS
-            unknown_subtypes = set(result.emotional_subtypes) - ALLOWED_SUBTYPES
-            if unknown_labels or unknown_subtypes:
+            payload = {
+                "relevance": result.relevance,
+                "labels": result.labels,
+                "emotional_subtypes": result.emotional_subtypes,
+                "reason": result.reason,
+            }
+            parsed = parse_response(json.dumps(payload, ensure_ascii=False), schema)
+            annotation_result = parsed["annotation_result"]
+            if parsed["fallback"]:
                 raise HTTPException(
-                    400,
-                    f"row {result.row_id} 含不允許的標籤：{sorted(unknown_labels | unknown_subtypes)}",
+                    status_code=400,
+                    detail={
+                        "code": "INVALID_ANNOTATION_RESULT",
+                        "row_id": result.row_id,
+                        "message": annotation_result.reason,
+                    },
                 )
-            if not has_valid_emotional_hierarchy(result.labels, result.emotional_subtypes):
-                raise HTTPException(
-                    400,
-                    f"row {result.row_id} 的情緒子類型必須同時標記 Emotional Resonance",
+
+            metadata = dict(result.metadata)
+            if result.confidence is not None:
+                metadata.setdefault("confidence", result.confidence)
+            if metadata:
+                annotation_result = annotation_result.model_copy(
+                    update={"metadata": metadata}
                 )
-            labels = json.dumps(result.labels, ensure_ascii=False)
-            subtypes = json.dumps(result.emotional_subtypes, ensure_ascii=False)
+
+            projection = compatibility_projection(schema, annotation_result)
+            canonical_json = json.dumps(
+                annotation_result.model_dump(mode="json"), ensure_ascii=False
+            )
+            labels_json = json.dumps(projection["labels"], ensure_ascii=False)
+            subtypes_json = json.dumps(
+                projection["emotional_subtypes"], ensure_ascii=False
+            )
+
             llm_result_params.append(
-                (result.row_id, slot, source_name, result.relevance, labels, subtypes, result.reason)
+                (
+                    result.row_id,
+                    slot,
+                    source_name,
+                    projection["relevance"],
+                    labels_json,
+                    subtypes_json,
+                    projection["reason"],
+                    canonical_json,
+                )
             )
             if slot == 1:
-                rows_update_params.append((result.relevance, labels, subtypes, result.reason, result.row_id))
+                rows_update_params.append(
+                    (
+                        canonical_json,
+                        projection["relevance"],
+                        labels_json,
+                        subtypes_json,
+                        projection["reason"],
+                        result.row_id,
+                    )
+                )
             else:
                 rows_update_params.append((result.row_id,))
             task_item_params.append((task_id, result.row_id))
 
         conn.executemany(
             """INSERT INTO row_llm_results
-               (row_id, slot, source_name, relevance, labels, subtypes, reason, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
+               (row_id, slot, source_name, relevance, labels, subtypes, reason, result, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb, datetime('now', 'localtime'))
                ON CONFLICT (row_id, slot) DO UPDATE SET
                    source_name=EXCLUDED.source_name,
                    relevance=EXCLUDED.relevance,
                    labels=EXCLUDED.labels,
                    subtypes=EXCLUDED.subtypes,
                    reason=EXCLUDED.reason,
+                   result=EXCLUDED.result,
                    updated_at=EXCLUDED.updated_at""",
             llm_result_params,
         )
         if slot == 1:
             conn.executemany(
-                """UPDATE rows SET ai_relevance=?, ai_labels=?, ai_emotional_subtypes=?, ai_reason=?,
+                """UPDATE rows SET prediction=?::jsonb,
+                   ai_relevance=?, ai_labels=?, ai_emotional_subtypes=?, ai_reason=?,
                    llm_updated_at=datetime('now', 'localtime') WHERE id=?""",
                 rows_update_params,
             )
@@ -370,7 +476,9 @@ def submit_labeling_batch(
             (task_id,),
         ).fetchone()["count"]
         status = "done" if processed >= task["total"] else "running"
-        finished_sql = ", finished_at=datetime('now', 'localtime')" if status == "done" else ""
+        finished_sql = (
+            ", finished_at=datetime('now', 'localtime')" if status == "done" else ""
+        )
         conn.execute(
             f"""UPDATE tasks SET processed=?, status=?, claimed_by=?,
                 last_activity_at=datetime('now', 'localtime'){finished_sql} WHERE id=?""",
