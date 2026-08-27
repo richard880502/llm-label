@@ -89,6 +89,40 @@ def test_legacy_emotional_subtypes_are_absorbed_into_generic_labels():
     assert projection["emotional_subtypes"] == ["Excited and Proud"]
 
 
+def test_double_brace_legacy_response_is_recovered():
+    raw = '{{"relevance": "相關", "labels": ["Mirroring", "Emotional Resonance"], "emotional_subtypes": ["Hopeful and Expectant"], "reason": "留言者表示想學習老師教單字的方法，並表達期待與擔心來不及的情緒。"}}'
+    parsed = parse_response(raw, fresh_legacy_schema())
+
+    assert parsed["fallback"] is False
+    assert parsed["raw"] == raw
+    result = parsed["annotation_result"]
+    assert result.relevance == "related"
+    assert result.labels == [
+        "mirroring",
+        "emotional_resonance",
+        "hopeful_and_expectant",
+    ]
+
+
+def test_prose_wrapped_json_object_is_recovered_without_rewriting_content():
+    raw = '分類結果如下：\n{"relevance":"相關","labels":["物流"],"reason":"配送延遲"}\n以上。'
+    parsed = parse_response(raw, _shipping_schema())
+
+    assert parsed["fallback"] is False
+    assert parsed["raw"] == raw
+    result = parsed["annotation_result"]
+    assert result.labels == ["after_sales", "shipping"]
+    assert result.reason == "配送延遲"
+
+
+def test_malformed_inner_json_still_fails_after_wrapper_recovery():
+    raw = '{{"relevance":"相關","labels":["物流",],"reason":"x"}}'
+    parsed = parse_response(raw, _shipping_schema())
+
+    assert parsed["fallback"] is True
+    assert "解析失敗" in parsed["annotation_result"].reason
+
+
 def test_generic_projection_keeps_custom_taxonomy_readable_for_legacy_ui():
     schema = _shipping_schema()
     parsed = parse_response(
