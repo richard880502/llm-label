@@ -71,6 +71,50 @@ def _parse_failure(message: str, raw: str = "") -> dict:
     }
 
 
+def _json_candidates(payload_text: str) -> list[str]:
+    """Return conservative JSON candidates without rewriting model content.
+
+    LLMs occasionally wrap an otherwise valid object in one extra brace pair
+    (``{{...}}``) or add a short prose prefix/suffix. We only remove those outer
+    wrappers; malformed JSON *inside* the object still fails normally.
+    """
+    stripped = payload_text.strip()
+    candidates: list[str] = []
+
+    def add(candidate: str) -> None:
+        candidate = candidate.strip()
+        if candidate and candidate not in candidates:
+            candidates.append(candidate)
+
+    add(stripped)
+
+    if stripped.startswith("{{") and stripped.endswith("}}") and len(stripped) >= 4:
+        add(stripped[1:-1])
+
+    first_brace = stripped.find("{")
+    last_brace = stripped.rfind("}")
+    if first_brace >= 0 and last_brace > first_brace:
+        object_fragment = stripped[first_brace:last_brace + 1]
+        if object_fragment != stripped:
+            add(object_fragment)
+        if object_fragment.startswith("{{") and object_fragment.endswith("}}"):
+            add(object_fragment[1:-1])
+
+    return candidates
+
+
+def _load_llm_json(payload_text: str):
+    last_error: json.JSONDecodeError | None = None
+    for candidate in _json_candidates(payload_text):
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError as error:
+            last_error = error
+    if last_error is not None:
+        raise last_error
+    raise json.JSONDecodeError("LLM 回傳沒有可解析的 JSON", payload_text, 0)
+
+
 def parse_response(text: str, schema: AnnotationSchema) -> dict:
     """Parse an LLM response into the canonical project-scoped result contract."""
     original = text.strip()
@@ -80,7 +124,7 @@ def parse_response(text: str, schema: AnnotationSchema) -> dict:
         payload_text = fenced.group(1).strip()
 
     try:
-        data = json.loads(payload_text)
+        data = _load_llm_json(payload_text)
         if not isinstance(data, dict):
             return _parse_failure("LLM 回傳必須是 JSON object", original)
 
@@ -113,10 +157,10 @@ def parse_response(text: str, schema: AnnotationSchema) -> dict:
         result = normalize_result(schema, result)
         validate_result(schema, result)
         return {"annotation_result": result, "fallback": False, "raw": original}
-    except (json.JSONDecodeError, TypeError, ValueError) as error:
-        return _parse_failure(str(error), original)
     except SchemaValidationError as error:
         return _parse_failure("；".join(error.issues), original)
+    except (json.JSONDecodeError, TypeError, ValueError) as error:
+        return _parse_failure(str(error), original)
     except Exception as error:
         return _parse_failure(str(error), original)
 
@@ -381,7 +425,7 @@ async def run_classification_task(
         with get_db() as conn:
             conn.execute(
                 "UPDATE tasks SET status='failed', error=?, finished_at=datetime('now', 'localtime') WHERE id=?",
-                (str(error), task_id),
+                (str(error), task_id,),
             )
             conn.commit()
     finally:
