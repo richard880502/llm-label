@@ -20,6 +20,10 @@ def ensure_annotation_schema_columns() -> None:
         conn.execute("ALTER TABLE rows ADD COLUMN IF NOT EXISTS prediction JSONB")
         conn.execute("ALTER TABLE rows ADD COLUMN IF NOT EXISTS corrected_result JSONB")
 
+        # Multi-LLM projects need a canonical result per slot; rows.prediction is only
+        # the primary (slot 1) projection used by the main review flow.
+        conn.execute("ALTER TABLE row_llm_results ADD COLUMN IF NOT EXISTS result JSONB")
+
         # Existing projects become explicit legacy-schema projects. Runtime fallbacks in
         # project_service remain as a second safety net for partially migrated databases.
         conn.execute(
