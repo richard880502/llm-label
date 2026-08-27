@@ -11,6 +11,7 @@ from .auth import get_current_user
 from .database import init_db
 from .routers import export, projects, rows
 from .routers import auth as auth_router
+from .routers import imports as imports_router
 from .routers import oauth as oauth_router
 from .routers import presence as presence_router
 from .routers import schemas as schemas_router
@@ -47,6 +48,12 @@ app.include_router(
     users_router.router,
     prefix="/api/users",
     tags=["users"],
+    dependencies=[Depends(get_current_user)],
+)
+app.include_router(
+    imports_router.router,
+    prefix="/api/imports",
+    tags=["imports"],
     dependencies=[Depends(get_current_user)],
 )
 app.include_router(
