@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { api, LLMSlotConfig, McpOAuthConnection, Project, Task } from '../api/client'
 import LLMSettingsAdvancedModal from './LLMSettingsAdvancedModal'
+import CodebookEditorDialog from './CodebookEditorDialog'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Label } from '@/components/ui/label'
@@ -85,9 +86,7 @@ function TaskDock({
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <p className="truncate text-sm font-medium">{taskSource(task, slots)}</p>
-                      <p className="mt-0.5 text-xs text-muted-foreground">
-                        #{task.id} · {STATUS_LABEL[task.status]}
-                      </p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">#{task.id} · {STATUS_LABEL[task.status]}</p>
                     </div>
                     <Badge variant={task.status === 'failed' ? 'destructive' : 'outline'} className="shrink-0 text-[11px]">
                       {task.processed}/{task.total}
@@ -106,19 +105,13 @@ function TaskDock({
                     </div>
                   )}
 
-                  {task.error && !isActive && (
-                    <p className="line-clamp-2 text-xs text-destructive">{task.error}</p>
-                  )}
+                  {task.error && !isActive && <p className="line-clamp-2 text-xs text-destructive">{task.error}</p>}
 
                   <div className="flex justify-end">
                     {isActive ? (
-                      <Button variant="destructive" size="xs" onClick={() => onStop(task.id)}>
-                        停止
-                      </Button>
+                      <Button variant="destructive" size="xs" onClick={() => onStop(task.id)}>停止</Button>
                     ) : (
-                      <Button variant="ghost" size="xs" className="text-destructive hover:text-destructive" onClick={() => onDelete(task.id)}>
-                        刪除
-                      </Button>
+                      <Button variant="ghost" size="xs" className="text-destructive hover:text-destructive" onClick={() => onDelete(task.id)}>刪除</Button>
                     )}
                   </div>
                 </div>
@@ -149,6 +142,7 @@ function TaskDock({
 
 export default function LLMSettingsModal({ projectId: pid, open, onClose, onTasksChanged }: Props) {
   const [advancedOpen, setAdvancedOpen] = useState(false)
+  const [codebookOpen, setCodebookOpen] = useState(false)
   const [slots, setSlots] = useState<LLMSlotConfig[]>([])
   const [project, setProject] = useState<Project | null>(null)
   const [tasks, setTasks] = useState<Task[]>([])
@@ -219,16 +213,14 @@ export default function LLMSettingsModal({ projectId: pid, open, onClose, onTask
       setSavedAnnotationInstructions(currentProject.annotation_instructions || '')
     }
 
-    if (connectionsResult.status === 'fulfilled') {
-      setMcpConnections(connectionsResult.value)
-    }
-
+    if (connectionsResult.status === 'fulfilled') setMcpConnections(connectionsResult.value)
     await refreshTasks()
   }
 
   useEffect(() => {
     if (!open) {
       setAdvancedOpen(false)
+      setCodebookOpen(false)
       setCreatedMcpTask(null)
       setTaskError(null)
       return
@@ -368,61 +360,57 @@ export default function LLMSettingsModal({ projectId: pid, open, onClose, onTask
     <>
       <Dialog open={open} onOpenChange={value => { if (!value) onClose() }}>
         <DialogContent className="sm:max-w-3xl h-[90vh] flex flex-col gap-0 p-0 overflow-hidden">
-          <DialogHeader className="border-b px-6 py-4 shrink-0">
+          <DialogHeader className="shrink-0 border-b px-6 py-4">
             <div className="flex items-start justify-between gap-4 pr-8">
               <div>
                 <DialogTitle>自動分類</DialogTitle>
                 <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                  先調整分類規則，再選擇平台模型或 MCP Agent 執行。未儲存的 Codebook 會在開始任務前自動儲存。
+                  先確認分類規則，再選擇平台模型或 MCP Agent 執行。Codebook 有修改時，開始任務前會自動儲存。
                 </p>
               </div>
               <Button variant="outline" size="sm" onClick={() => setAdvancedOpen(true)}>
-                完整模型 / MCP 設定
+                進階設定
               </Button>
             </div>
           </DialogHeader>
 
-          <div className="overflow-y-auto flex-1 min-h-0 px-6 py-5 space-y-6">
-            <section className="space-y-3 rounded-2xl border border-teal-200 bg-teal-50/40 p-4 dark:border-teal-900 dark:bg-teal-950/10">
+          <div className="min-h-0 flex-1 space-y-6 overflow-y-auto px-6 py-5">
+            <button
+              type="button"
+              onClick={() => setCodebookOpen(true)}
+              className="group w-full rounded-2xl border border-teal-200 bg-teal-50/40 p-4 text-left transition hover:border-teal-400 hover:bg-teal-50/70 dark:border-teal-900 dark:bg-teal-950/10 dark:hover:border-teal-700 dark:hover:bg-teal-950/20"
+            >
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <p className="text-sm font-semibold">1. 分類規則</p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-semibold">1. 分類規則 / Codebook</p>
+                    <span className="text-xs text-teal-700 opacity-0 transition-opacity group-hover:opacity-100 dark:text-teal-300">點擊完整編輯 →</span>
+                  </div>
                   <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                    這份 Codebook 會同時提供給平台 API 與 MCP Agent。現在有 {project?.corrected || 0} 筆人工修正案例可供 few-shot 使用。
+                    平台 API 與 MCP Agent 共用同一份規則；目前有 {project?.corrected || 0} 筆人工修正案例可供 Few-shot 使用。
                   </p>
                 </div>
-                <Badge variant={codebookDirty ? 'outline' : 'secondary'}>
-                  {codebookDirty ? '尚未儲存' : '已儲存'}
-                </Badge>
+                <Badge variant={codebookDirty ? 'outline' : 'secondary'}>{codebookDirty ? '尚未儲存' : '已儲存'}</Badge>
               </div>
 
-              <textarea
-                value={annotationInstructions}
-                onChange={event => {
-                  setAnnotationInstructions(event.target.value)
-                  setInstructionsMessage(null)
-                }}
-                rows={8}
-                maxLength={12000}
-                placeholder="描述標籤判斷方式、模糊案例如何處理，以及任何專案特有的分類規則。"
-                className="w-full resize-y rounded-xl border border-input bg-card px-3 py-2 text-sm leading-6 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-teal-500/30"
-              />
+              <div className="mt-3 rounded-xl border border-teal-200/70 bg-card/70 px-3 py-2.5 dark:border-teal-900/70">
+                {annotationInstructions.trim() ? (
+                  <p className="line-clamp-3 whitespace-pre-wrap text-sm leading-6 text-foreground/80">{annotationInstructions}</p>
+                ) : (
+                  <p className="text-sm text-muted-foreground">尚未撰寫規則。點擊這個區域開始建立 Codebook。</p>
+                )}
+              </div>
 
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <p className="text-xs text-muted-foreground">
-                  {annotationInstructions.length.toLocaleString()} / 12,000 字元
-                  {codebookDirty && ' · 開始分類時會自動儲存'}
-                </p>
-                <Button variant="outline" size="sm" onClick={saveInstructions} disabled={!codebookDirty || savingInstructions}>
-                  {savingInstructions ? '儲存中…' : '儲存規則'}
-                </Button>
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                <span>{annotationInstructions.length.toLocaleString()} / 12,000 字元{codebookDirty ? ' · 開始分類時會自動儲存' : ''}</span>
+                <span className="font-medium text-teal-700 dark:text-teal-300">開啟完整 Codebook 編輯器</span>
               </div>
               {instructionsMessage && (
-                <p className={`text-xs ${instructionsMessage.startsWith('儲存失敗') ? 'text-destructive' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                <p className={`mt-2 text-xs ${instructionsMessage.startsWith('儲存失敗') ? 'text-destructive' : 'text-emerald-600 dark:text-emerald-400'}`}>
                   {instructionsMessage}
                 </p>
               )}
-            </section>
+            </button>
 
             <section className="space-y-4 rounded-2xl border border-border p-4">
               <div>
@@ -483,7 +471,7 @@ export default function LLMSettingsModal({ projectId: pid, open, onClose, onTask
                   {configuredSlots.length === 0 ? (
                     <div className="space-y-2 text-sm">
                       <p className="font-medium">尚未設定平台模型</p>
-                      <p className="text-xs text-muted-foreground">先到完整設定新增 API URL、模型與必要的 API Key。</p>
+                      <p className="text-xs text-muted-foreground">先到進階設定新增 API URL、模型與必要的 API Key。</p>
                       <Button variant="outline" size="sm" onClick={() => setAdvancedOpen(true)}>設定平台模型</Button>
                     </div>
                   ) : (
@@ -495,9 +483,7 @@ export default function LLMSettingsModal({ projectId: pid, open, onClose, onTask
                             <SelectTrigger><SelectValue /></SelectTrigger>
                             <SelectContent>
                               {configuredSlots.map(config => (
-                                <SelectItem key={config.slot} value={String(config.slot)}>
-                                  {modelName(config)} · {config.model}
-                                </SelectItem>
+                                <SelectItem key={config.slot} value={String(config.slot)}>{modelName(config)} · {config.model}</SelectItem>
                               ))}
                             </SelectContent>
                           </Select>
@@ -572,9 +558,7 @@ export default function LLMSettingsModal({ projectId: pid, open, onClose, onTask
                   <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card/70 px-3 py-2.5">
                     <div>
                       <p className="text-sm font-medium">MCP 連線</p>
-                      <p className="text-xs text-muted-foreground">
-                        GUI OAuth 目前偵測到 {mcpConnections.length} 個連線；CLI Agent 也可以使用既有 access token。
-                      </p>
+                      <p className="text-xs text-muted-foreground">GUI OAuth 目前偵測到 {mcpConnections.length} 個連線；CLI Agent 也可以使用既有 access token。</p>
                     </div>
                     <Button variant="outline" size="sm" onClick={() => setAdvancedOpen(true)}>管理連線</Button>
                   </div>
@@ -591,9 +575,7 @@ export default function LLMSettingsModal({ projectId: pid, open, onClose, onTask
                         <p className="text-sm font-medium">任務 #{createdMcpTask.id} 已建立</p>
                         <Badge variant="outline">等待 Agent</Badge>
                       </div>
-                      <p className="text-xs leading-5 text-muted-foreground">
-                        已建立 MCP 任務。把下列指令交給 Agent，它會 claim 任務並持續提交分類結果。
-                      </p>
+                      <p className="text-xs leading-5 text-muted-foreground">把下列指令交給 Agent，它會 claim 任務並持續提交分類結果。</p>
                       <div className="flex items-start gap-2">
                         <textarea
                           readOnly
@@ -613,20 +595,35 @@ export default function LLMSettingsModal({ projectId: pid, open, onClose, onTask
 
             <section className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-muted/30 p-4">
               <div>
-                <p className="text-sm font-medium">需要調整模型、Prompt、Few-shot 或 MCP 連線？</p>
-                <p className="mt-1 text-xs text-muted-foreground">這些低頻設定都保留在完整設定裡，不會干擾日常的「改規則 → 開始分類」流程。</p>
+                <p className="text-sm font-medium">模型、Prompt、Few-shot 或 MCP 連線</p>
+                <p className="mt-1 text-xs text-muted-foreground">這些低頻設定集中在進階設定；完整任務紀錄也在同一處。</p>
               </div>
-              <Button variant="outline" onClick={() => setAdvancedOpen(true)}>開啟完整設定</Button>
+              <Button variant="outline" onClick={() => setAdvancedOpen(true)}>開啟進階設定</Button>
             </section>
           </div>
 
-          <DialogFooter className="border-t px-6 py-3 shrink-0">
+          <DialogFooter className="shrink-0 border-t px-6 py-3">
             <Button variant="outline" onClick={onClose}>關閉</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {open && (
+      <CodebookEditorDialog
+        open={codebookOpen}
+        onOpenChange={setCodebookOpen}
+        value={annotationInstructions}
+        onChange={value => {
+          setAnnotationInstructions(value)
+          setInstructionsMessage(null)
+        }}
+        correctedExamples={project?.corrected || 0}
+        dirty={codebookDirty}
+        saving={savingInstructions}
+        message={instructionsMessage}
+        onSave={saveInstructions}
+      />
+
+      {open && !codebookOpen && (
         <TaskDock tasks={tasks} slots={slots} onStop={stopTask} onDelete={deleteTask} />
       )}
     </>
