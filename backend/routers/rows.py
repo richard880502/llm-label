@@ -4,9 +4,13 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from ..annotation.models import AnnotationResult
+from ..annotation.project_service import get_project_schema
+from ..annotation.review_service import build_corrected_result
+from ..annotation.schema_service import SchemaValidationError
 from ..auth import CurrentUser, get_current_user, require_scope
 from ..database import get_db
-from ..llm.classifier import ALLOWED_LABELS, ALLOWED_SUBTYPES, has_valid_emotional_hierarchy
+from ..llm.classifier import compatibility_projection
 
 router = APIRouter()
 
@@ -14,6 +18,9 @@ VALID_ROW_STATUSES = ("pending", "approved", "corrected", "uncertain")
 
 
 class RowUpdate(BaseModel):
+    # Preferred issue #6 contract. Legacy fields below remain accepted until the
+    # current ReviewPage migrates to the dynamic schema editor.
+    corrected_result: AnnotationResult | None = None
     corrected_relevance: Optional[str] = None
     corrected_labels: Optional[list[str]] = None
     corrected_emotional_subtypes: Optional[list[str]] = None
@@ -53,9 +60,9 @@ def list_rows(
         conditions.append("(r.corrected_relevance = ? OR (r.corrected_relevance IS NULL AND r.ai_relevance = ?))")
         params += [relevance, relevance]
     if q:
-        conditions.append("(r.comment_content LIKE ? OR r.content LIKE ?)")
+        conditions.append("(r.comment_content LIKE ? OR r.content LIKE ? OR r.text LIKE ?)")
         like = f"%{q}%"
-        params += [like, like]
+        params += [like, like, like]
     if disagreement == "only":
         conditions.append("""(
             SELECT COUNT(DISTINCT rlr.relevance) FROM row_llm_results rlr
@@ -82,7 +89,8 @@ def list_rows(
         )
         offset = (page - 1) * page_size
         rows_db = conn.execute(
-            f"""SELECT r.id, r.source_row_number, r.comment_content, r.content,
+            f"""SELECT r.id, r.source_row_number, r.text, r.comment_content, r.content,
+                       r.prediction, r.corrected_result,
                        r.ai_relevance, r.ai_labels, r.ai_emotional_subtypes,
                        r.corrected_relevance, r.corrected_labels, r.corrected_emotional_subtypes,
                        r.status, r.reviewed_at, r.llm_updated_at, u.username AS reviewer_username,
@@ -140,7 +148,8 @@ def get_row(project_id: int, row_id: int):
                           END,
                           'LLM ' || rlr.slot
                       ) AS name,
-                      rlr.relevance, rlr.labels, rlr.subtypes, rlr.reason, rlr.updated_at
+                      rlr.relevance, rlr.labels, rlr.subtypes, rlr.reason,
+                      rlr.result, rlr.updated_at
                  FROM row_llm_results rlr
                  JOIN rows result_row ON result_row.id = rlr.row_id
                  LEFT JOIN llm_configs cfg
@@ -172,9 +181,9 @@ def adjacent_rows(
         conditions.append("(corrected_relevance = ? OR (corrected_relevance IS NULL AND ai_relevance = ?))")
         params += [relevance, relevance]
     if q:
-        conditions.append("(comment_content LIKE ? OR content LIKE ?)")
+        conditions.append("(comment_content LIKE ? OR content LIKE ? OR text LIKE ?)")
         like = f"%{q}%"
-        params += [like, like]
+        params += [like, like, like]
     where = " AND ".join(conditions)
 
     with get_db() as conn:
@@ -243,9 +252,9 @@ def batch_update_rows(
                 conditions.append("(corrected_relevance = ? OR (corrected_relevance IS NULL AND ai_relevance = ?))")
                 params += [body.relevance_filter, body.relevance_filter]
             if body.q_filter:
-                conditions.append("(comment_content LIKE ? OR content LIKE ?)")
+                conditions.append("(comment_content LIKE ? OR content LIKE ? OR text LIKE ?)")
                 like = f"%{body.q_filter}%"
-                params += [like, like]
+                params += [like, like, like]
             if body.disagreement_filter == "only":
                 conditions.append(
                     "(SELECT COUNT(DISTINCT rlr.relevance) FROM row_llm_results rlr"
@@ -274,6 +283,17 @@ def batch_update_rows(
     return {"updated": updated}
 
 
+def _schema_error(row_id: int, error: SchemaValidationError) -> HTTPException:
+    return HTTPException(
+        400,
+        detail={
+            "code": "INVALID_ANNOTATION_RESULT",
+            "row_id": row_id,
+            "issues": error.issues,
+        },
+    )
+
+
 @router.patch("/{project_id}/rows/{row_id}")
 def update_row(
     project_id: int,
@@ -287,14 +307,6 @@ def update_row(
         require_scope(current_user, "rows:write")
     if body.status is not None and body.status not in VALID_ROW_STATUSES:
         raise HTTPException(400, "Invalid request")
-    if body.corrected_labels is not None:
-        unknown_labels = set(body.corrected_labels) - ALLOWED_LABELS
-        if unknown_labels:
-            raise HTTPException(400, f"含不允許的標籤：{sorted(unknown_labels)}")
-    if body.corrected_emotional_subtypes is not None:
-        unknown_subtypes = set(body.corrected_emotional_subtypes) - ALLOWED_SUBTYPES
-        if unknown_subtypes:
-            raise HTTPException(400, f"含不允許的情緒子類型：{sorted(unknown_subtypes)}")
 
     with get_db() as conn:
         row = conn.execute(
@@ -303,32 +315,41 @@ def update_row(
         if not row:
             raise HTTPException(404, "Row not found")
 
-        if body.corrected_emotional_subtypes is not None:
-            # 若這次同時送 labels，以該值驗證；只有更新子類型時，則沿用既有 labels。
-            labels_for_hierarchy = body.corrected_labels
-            if labels_for_hierarchy is None:
-                raw_labels = row["corrected_labels"] or row["ai_labels"] or "[]"
-                try:
-                    labels_for_hierarchy = json.loads(raw_labels)
-                except (TypeError, json.JSONDecodeError):
-                    labels_for_hierarchy = []
-            if not has_valid_emotional_hierarchy(labels_for_hierarchy or [], body.corrected_emotional_subtypes):
-                raise HTTPException(400, "情緒子類型必須同時標記 Emotional Resonance")
-
         if body.version is not None and (row["version"] or 0) != body.version:
             raise HTTPException(409, detail="CONFLICT")
+
+        schema = get_project_schema(conn, project_id)
+        try:
+            canonical = build_corrected_result(
+                schema,
+                row,
+                corrected_result=body.corrected_result,
+                corrected_relevance=body.corrected_relevance,
+                corrected_labels=body.corrected_labels,
+                corrected_emotional_subtypes=body.corrected_emotional_subtypes,
+            )
+        except SchemaValidationError as error:
+            raise _schema_error(row_id, error)
+
+        projection = compatibility_projection(schema, canonical) if canonical is not None else None
+        canonical_json = (
+            json.dumps(canonical.model_dump(mode="json"), ensure_ascii=False)
+            if canonical is not None
+            else None
+        )
 
         user_row = conn.execute(
             "SELECT id FROM users WHERE username=?", (current_user.username,)
         ).fetchone()
 
         updates: dict = {}
-        if body.corrected_relevance is not None:
-            updates["corrected_relevance"] = body.corrected_relevance
-        if body.corrected_labels is not None:
-            updates["corrected_labels"] = json.dumps(body.corrected_labels, ensure_ascii=False)
-        if body.corrected_emotional_subtypes is not None:
-            updates["corrected_emotional_subtypes"] = json.dumps(body.corrected_emotional_subtypes, ensure_ascii=False)
+        if canonical is not None:
+            updates["corrected_result"] = canonical_json
+            updates["corrected_relevance"] = projection["relevance"]
+            updates["corrected_labels"] = json.dumps(projection["labels"], ensure_ascii=False)
+            updates["corrected_emotional_subtypes"] = json.dumps(
+                projection["emotional_subtypes"], ensure_ascii=False
+            )
         if body.reviewer_note is not None:
             updates["reviewer_note"] = body.reviewer_note
         if body.status is not None:
@@ -339,23 +360,43 @@ def update_row(
             updates["reviewer_id"] = user_row["id"]
 
         if updates:
-            # Handle datetime specially
             reviewed_at_expr = updates.pop("reviewed_at", None)
-            set_parts = [f"{k} = ?" for k in updates]
-            vals = list(updates.values())
+            set_parts = []
+            vals = []
+            for key, value in updates.items():
+                if key == "corrected_result":
+                    set_parts.append("corrected_result = ?::jsonb")
+                else:
+                    set_parts.append(f"{key} = ?")
+                vals.append(value)
             if reviewed_at_expr:
                 set_parts.append("reviewed_at = datetime('now', 'localtime')")
             conn.execute(
                 f"UPDATE rows SET {', '.join(set_parts)} WHERE id=?",
                 vals + [row_id],
             )
+
+            audit_relevance = projection["relevance"] if projection is not None else body.corrected_relevance
+            audit_labels = (
+                json.dumps(projection["labels"], ensure_ascii=False)
+                if projection is not None
+                else (
+                    json.dumps(body.corrected_labels, ensure_ascii=False)
+                    if body.corrected_labels is not None
+                    else None
+                )
+            )
             conn.execute(
                 """INSERT INTO audit_log (project_id, row_id, username, status, relevance, labels)
                    VALUES (?, ?, ?, ?, ?, ?)""",
-                (project_id, row_id, current_user.username,
-                 body.status,
-                 body.corrected_relevance,
-                 json.dumps(body.corrected_labels, ensure_ascii=False) if body.corrected_labels is not None else None),
+                (
+                    project_id,
+                    row_id,
+                    current_user.username,
+                    body.status,
+                    audit_relevance,
+                    audit_labels,
+                ),
             )
             conn.commit()
 
