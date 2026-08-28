@@ -18,6 +18,7 @@ except ImportError:
 
 from ..auth import CurrentUser, get_current_user
 from ..database import get_db
+from ..llm.prompt_policy import get_shared_prompt_template, set_shared_prompt_template
 
 router = APIRouter()
 
@@ -209,7 +210,6 @@ class AnnotationInstructionsUpdate(BaseModel):
 
 @router.get("/{project_id}/llm-configs")
 def list_llm_configs(project_id: int, _: CurrentUser = Depends(get_current_user)):
-    from ..llm.prompt_builder import DEFAULT_TEMPLATE
     with get_db() as conn:
         rows = conn.execute(
             "SELECT * FROM llm_configs WHERE project_id=? ORDER BY slot", (project_id,)
@@ -244,11 +244,13 @@ def list_llm_configs(project_id: int, _: CurrentUser = Depends(get_current_user)
                 except Exception:
                     pass
 
+        shared_prompt = get_shared_prompt_template(conn, project_id)
+
     by_slot = {}
     for r in rows:
         d = dict(r)
-        if not d.get("prompt_template"):
-            d["prompt_template"] = DEFAULT_TEMPLATE
+        # Prompt is project-scoped. Keep this compatibility field identical for all slots.
+        d["prompt_template"] = shared_prompt
         d["has_api_key"] = bool(d.get("api_key"))
         d["api_key"] = _mask_api_key(d.get("api_key") or "")
         by_slot[d["slot"]] = d
@@ -261,7 +263,7 @@ def list_llm_configs(project_id: int, _: CurrentUser = Depends(get_current_user)
             result.append({
                 "project_id": project_id, "slot": slot,
                 "name": f"LLM {slot}", "api_url": "", "api_key": "", "model": "",
-                "prompt_template": DEFAULT_TEMPLATE,
+                "prompt_template": shared_prompt,
                 "examples_mode": "corrected_only", "examples_per_label": 3, "concurrency": 1,
                 "extra_body": "", "has_api_key": False,
             })
@@ -303,11 +305,16 @@ def set_llm_config_slot(project_id: int, slot: int, body: LLMSlotUpdate, _: Curr
              body.prompt_template, body.examples_mode, body.examples_per_label, max(1, body.concurrency),
              body.extra_body),
         )
+        try:
+            shared_prompt = set_shared_prompt_template(conn, project_id, body.prompt_template)
+        except ValueError:
+            raise HTTPException(404, "Project not found")
         conn.commit()
         row = conn.execute(
             "SELECT * FROM llm_configs WHERE project_id=? AND slot=?", (project_id, slot)
         ).fetchone()
     result = dict(row)
+    result["prompt_template"] = shared_prompt
     result["has_api_key"] = bool(result.get("api_key"))
     result["api_key"] = _mask_api_key(result.get("api_key") or "")
     return result
@@ -340,8 +347,10 @@ def list_slot_models(project_id: int, slot: int, _: CurrentUser = Depends(get_cu
 
 @router.get("/{project_id}/llm-configs/{slot}/preview")
 def preview_slot_prompt(project_id: int, slot: int, _: CurrentUser = Depends(get_current_user)):
+    from ..annotation.project_service import get_project_schema
     from ..llm.example_selector import select_examples
-    from ..llm.prompt_builder import build_prompt
+    from ..llm.generic_prompt_builder import build_generic_prompt
+
     with get_db() as conn:
         row = conn.execute(
             "SELECT * FROM llm_configs WHERE project_id=? AND slot=?", (project_id, slot)
@@ -353,14 +362,17 @@ def preview_slot_prompt(project_id: int, slot: int, _: CurrentUser = Depends(get
         project = conn.execute(
             "SELECT annotation_instructions FROM projects WHERE id=?", (project_id,)
         ).fetchone()
+        schema = get_project_schema(conn, project_id)
+        shared_prompt = get_shared_prompt_template(conn, project_id)
     sample = "這個活動辦得很好，謝謝主辦單位的用心！"
-    prompt = build_prompt(
-        cfg.get("prompt_template", ""),
+    prompt = build_generic_prompt(
+        shared_prompt,
         examples,
         sample,
         project["annotation_instructions"] if project else "",
+        schema,
     )
-    return {"example_count": len(examples), "prompt": prompt}
+    return {"example_count": len(examples), "prompt": prompt, "prompt_scope": "project"}
 
 
 @router.patch("/{project_id}/annotation-instructions")
@@ -387,20 +399,20 @@ def update_annotation_instructions(
 
 @router.get("/{project_id}/llm-config")
 def get_llm_config(project_id: int, _: CurrentUser = Depends(get_current_user)):
-    from ..llm.prompt_builder import DEFAULT_TEMPLATE
     with get_db() as conn:
         proj = conn.execute(
-            "SELECT llm_config, annotation_instructions FROM projects WHERE id=?", (project_id,)
+            "SELECT id, llm_config, annotation_instructions FROM projects WHERE id=?", (project_id,)
         ).fetchone()
-    if not proj:
-        raise HTTPException(404, "Project not found")
+        if not proj:
+            raise HTTPException(404, "Project not found")
+        shared_prompt = get_shared_prompt_template(conn, project_id)
     config: dict = {}
     if proj["llm_config"]:
         try:
             config = json.loads(proj["llm_config"])
         except Exception:
             pass
-    config.setdefault("prompt_template", DEFAULT_TEMPLATE)
+    config["prompt_template"] = shared_prompt
     config.setdefault("api_url", "")
     config.setdefault("api_key", "")
     config.setdefault("model", "")
@@ -415,14 +427,18 @@ def get_llm_config(project_id: int, _: CurrentUser = Depends(get_current_user)):
 def update_llm_config(project_id: int, body: LLMConfigUpdate, _: CurrentUser = Depends(get_current_user)):
     with get_db() as conn:
         proj = conn.execute("SELECT llm_config FROM projects WHERE id=?", (project_id,)).fetchone()
+        if not proj:
+            raise HTTPException(404, "Project not found")
         existing_key = ""
-        if proj and proj["llm_config"]:
+        if proj["llm_config"]:
             try:
                 existing_key = json.loads(proj["llm_config"]).get("api_key", "")
             except Exception:
                 pass
         payload = body.model_dump()
         payload["api_key"] = _resolve_api_key(payload["api_key"], existing_key)
+        shared_prompt = set_shared_prompt_template(conn, project_id, payload["prompt_template"])
+        payload["prompt_template"] = shared_prompt
         conn.execute(
             "UPDATE projects SET llm_config=? WHERE id=?",
             (json.dumps(payload, ensure_ascii=False), project_id),
@@ -435,8 +451,10 @@ def update_llm_config(project_id: int, body: LLMConfigUpdate, _: CurrentUser = D
 
 @router.get("/{project_id}/llm-preview")
 def preview_prompt(project_id: int, _: CurrentUser = Depends(get_current_user)):
+    from ..annotation.project_service import get_project_schema
     from ..llm.example_selector import select_examples
-    from ..llm.prompt_builder import build_prompt
+    from ..llm.generic_prompt_builder import build_generic_prompt
+
     with get_db() as conn:
         proj = conn.execute(
             "SELECT llm_config, annotation_instructions FROM projects WHERE id=?", (project_id,)
@@ -451,11 +469,13 @@ def preview_prompt(project_id: int, _: CurrentUser = Depends(get_current_user)):
                 pass
         examples = select_examples(conn, project_id, cfg)
         project_instructions = proj["annotation_instructions"] or ""
+        schema = get_project_schema(conn, project_id)
+        shared_prompt = get_shared_prompt_template(conn, project_id)
     sample_comment = "這個活動辦得很好，謝謝主辦單位的用心！"
-    prompt = build_prompt(
-        cfg.get("prompt_template", ""), examples, sample_comment, project_instructions
+    prompt = build_generic_prompt(
+        shared_prompt, examples, sample_comment, project_instructions, schema
     )
-    return {"example_count": len(examples), "prompt": prompt}
+    return {"example_count": len(examples), "prompt": prompt, "prompt_scope": "project"}
 
 
 @router.get("/{project_id}/llm-models")
@@ -531,11 +551,13 @@ def get_project(project_id: int, _: CurrentUser = Depends(get_current_user)):
             WHERE p.id = ?
             GROUP BY p.id
         """, (project_id,)).fetchone()
-    if not proj:
-        raise HTTPException(404, "Project not found")
+        if not proj:
+            raise HTTPException(404, "Project not found")
+        shared_prompt = get_shared_prompt_template(conn, project_id)
     result = dict(proj)
     # 前端始終顯示「目前生效」的完整規則；尚未自訂的舊專案則顯示預設 Codebook。
     result["annotation_instructions"] = effective_project_instructions(
         result.get("annotation_instructions")
     )
+    result["shared_prompt_template"] = shared_prompt
     return result

@@ -11,6 +11,7 @@ from ..database import DatabaseConnection, DatabaseRow, get_db
 from .client import call_llm
 from .example_selector import select_examples
 from .generic_prompt_builder import build_generic_prompt
+from .prompt_policy import get_shared_prompt_template, prompt_fingerprint
 
 
 PARSE_FAIL_MARKER = "⚠️ 解析失敗"
@@ -267,12 +268,38 @@ async def run_classification_task(
                 (project_id,),
             ).fetchall()
             total = len(rows_to_process)
-            conn.execute("UPDATE tasks SET total=?, status='running' WHERE id=?", (total, task_id))
             examples = select_examples(conn, project_id, cfg)
             project = conn.execute(
                 "SELECT annotation_instructions FROM projects WHERE id=?", (project_id,)
             ).fetchone()
             project_instructions = project["annotation_instructions"] if project else ""
+            prompt_template = get_shared_prompt_template(conn, project_id)
+            current_fingerprint = prompt_fingerprint(
+                prompt_template,
+                examples,
+                project_instructions,
+                schema,
+            )
+            task = conn.execute(
+                "SELECT prompt_fingerprint FROM tasks WHERE id=? AND project_id=?",
+                (task_id, project_id),
+            ).fetchone()
+            expected_fingerprint = (task["prompt_fingerprint"] if task else "") or ""
+            if expected_fingerprint and expected_fingerprint != current_fingerprint:
+                conn.execute(
+                    """UPDATE tasks SET status='failed',
+                       error='Prompt / Codebook 規則已在任務建立後變更，請建立新任務',
+                       finished_at=datetime('now', 'localtime') WHERE id=?""",
+                    (task_id,),
+                )
+                conn.commit()
+                return
+            if not expected_fingerprint:
+                conn.execute(
+                    "UPDATE tasks SET prompt_fingerprint=? WHERE id=?",
+                    (current_fingerprint, task_id),
+                )
+            conn.execute("UPDATE tasks SET total=?, status='running' WHERE id=?", (total, task_id))
             conn.commit()
 
         if total == 0:
@@ -294,7 +321,6 @@ async def run_classification_task(
             else model or configured_name or f"LLM {slot}"
         )
         api_key = cfg.get("api_key", "")
-        prompt_template = cfg.get("prompt_template", "")
         try:
             extra_body = json.loads(cfg.get("extra_body") or "{}")
             if not isinstance(extra_body, dict):

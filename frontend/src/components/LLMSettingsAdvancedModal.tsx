@@ -245,11 +245,11 @@ function SlotPanel({
               <Input
                 type="number"
                 min={1}
-                max={20}
+                max={100}
                 value={cfg.concurrency}
                 onChange={event => setCfg(current => ({
                   ...current,
-                  concurrency: Math.max(1, Math.min(20, Number(event.target.value))),
+                  concurrency: Math.max(1, Math.min(100, Number(event.target.value))),
                 }))}
                 className="h-8 text-sm"
               />
@@ -271,7 +271,7 @@ function SlotPanel({
 
           <div className="space-y-2">
             <div className="flex items-center justify-between gap-2">
-              <Label className="text-xs">Prompt 模板</Label>
+              <Label className="text-xs">共享 Prompt（所有模型 / MCP 共用）</Label>
               <span className="text-xs text-muted-foreground">
                 可用 <code className="rounded bg-muted px-1">{'{examples}'}</code>{' '}
                 <code className="rounded bg-muted px-1">{'{comment}'}</code>
@@ -284,6 +284,7 @@ function SlotPanel({
               placeholder="留空則使用系統預設 Prompt"
               className="w-full resize-y rounded-lg border border-input bg-card px-3 py-2 font-mono text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring/50"
             />
+            <p className="text-xs text-muted-foreground">這是專案層級 Prompt。從任一模型修改並儲存後，其他模型與 MCP 會立即同步使用同一份 Prompt。</p>
           </div>
 
           <div className="flex flex-wrap gap-6 rounded-xl bg-muted/30 p-3">
@@ -379,7 +380,13 @@ export default function LLMSettingsAdvancedModal({ projectId: pid, open, onClose
   const saveCfg = async (slot: number) => {
     const cfg = slots[slot]
     if (cfg.api_url || cfg.model) {
-      await api.setLLMConfig(pid, slot, { ...cfg, name: cfg.name || `LLM ${slot}` })
+      const saved = await api.setLLMConfig(pid, slot, { ...cfg, name: cfg.name || `LLM ${slot}` })
+      setSlots(current => ({
+        ...current,
+        1: { ...(current[1] ?? EMPTY), prompt_template: saved.prompt_template },
+        2: { ...(current[2] ?? EMPTY), prompt_template: saved.prompt_template },
+        3: { ...(current[3] ?? EMPTY), prompt_template: saved.prompt_template },
+      }))
     } else {
       await api.deleteLLMConfigSlot(pid, slot).catch(() => {})
     }
@@ -536,7 +543,7 @@ export default function LLMSettingsAdvancedModal({ projectId: pid, open, onClose
           <div className="pr-8">
             <DialogTitle>進階分類設定</DialogTitle>
             <p className="mt-1 text-xs leading-5 text-muted-foreground">
-              這裡只管理模型、Prompt / Few-shot、MCP 連線與完整任務紀錄。Codebook 與開始分類請回到自動分類主畫面操作。
+              這裡管理模型連線、專案共用 Prompt、Few-shot、MCP 連線與完整任務紀錄。Codebook 與開始分類請回到自動分類主畫面操作。
             </p>
           </div>
         </DialogHeader>
@@ -545,7 +552,7 @@ export default function LLMSettingsAdvancedModal({ projectId: pid, open, onClose
           <section className="space-y-3">
             <div>
               <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">平台 LLM</p>
-              <p className="mt-1 text-sm text-muted-foreground">設定 API Provider、Model、Prompt、Few-shot 與供應商額外參數。</p>
+              <p className="mt-1 text-sm text-muted-foreground">模型可有不同 Provider / Model，但分類 Prompt 與 Codebook 維持專案層級共用。</p>
             </div>
             {([1, 2, 3] as const).map(slot => (
               <SlotPanel

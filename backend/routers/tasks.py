@@ -16,7 +16,7 @@ from ..llm.classifier import (
 )
 from ..llm.example_selector import select_examples
 from ..llm.generic_prompt_builder import build_generic_prompt
-from ..llm.prompt_builder import DEFAULT_TEMPLATE
+from ..llm.prompt_policy import get_shared_prompt_template, prompt_fingerprint
 
 router = APIRouter()
 
@@ -69,10 +69,56 @@ def _mcp_config(conn, project_id: int, slot: int) -> dict:
     if row:
         return dict(row)
     return {
-        "prompt_template": DEFAULT_TEMPLATE,
         "examples_mode": "corrected_only",
         "examples_per_label": 3,
     }
+
+
+def _prompt_state(conn, project_id: int, slot: int, schema=None) -> dict:
+    """Resolve the exact rule-bearing prompt state shared by API and MCP."""
+    schema = schema or get_project_schema(conn, project_id)
+    cfg = _mcp_config(conn, project_id, slot)
+    examples = select_examples(conn, project_id, cfg)
+    project = conn.execute(
+        "SELECT annotation_instructions FROM projects WHERE id=?", (project_id,)
+    ).fetchone()
+    project_instructions = project["annotation_instructions"] if project else ""
+    prompt_template = get_shared_prompt_template(conn, project_id)
+    fingerprint = prompt_fingerprint(
+        prompt_template,
+        examples,
+        project_instructions,
+        schema,
+    )
+    return {
+        "cfg": cfg,
+        "examples": examples,
+        "project_instructions": project_instructions,
+        "prompt_template": prompt_template,
+        "fingerprint": fingerprint,
+        "schema": schema,
+    }
+
+
+def _assert_task_prompt_stable(conn, task, current_fingerprint: str) -> None:
+    expected = (task["prompt_fingerprint"] or "").strip()
+    if not expected:
+        # Compatibility for a task created before this migration was deployed.
+        conn.execute(
+            "UPDATE tasks SET prompt_fingerprint=? WHERE id=?",
+            (current_fingerprint, task["id"]),
+        )
+        return
+    if expected != current_fingerprint:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "PROMPT_RULES_CHANGED",
+                "message": "此任務建立後 Prompt、Codebook、Schema 或 few-shot 已變更；請建立新任務以避免同一任務前後規則不一致。",
+                "expected_fingerprint": expected,
+                "current_fingerprint": current_fingerprint,
+            },
+        )
 
 
 def _task_payload(conn, task_id: int) -> dict:
@@ -151,6 +197,7 @@ def create_task(
         if running:
             raise HTTPException(400, f"結果槽 {body.slot} 已有任務執行中")
 
+        prompt_state = _prompt_state(conn, project_id, body.slot)
         initial_status = "pending" if body.execution_mode == "api" else "waiting_for_agent"
         executor_name = body.executor_name.strip() or (
             "platform-api" if body.execution_mode == "api" else "codex"
@@ -158,8 +205,10 @@ def create_task(
         cur = conn.execute(
             """INSERT INTO tasks
                (project_id, slot, status, total, processed, failed, created_at,
-                execution_mode, executor_name, target, created_by, last_activity_at)
-               VALUES (?, ?, ?, 0, 0, 0, datetime('now', 'localtime'), ?, ?, ?, ?, datetime('now', 'localtime'))""",
+                execution_mode, executor_name, target, created_by, last_activity_at,
+                prompt_fingerprint)
+               VALUES (?, ?, ?, 0, 0, 0, datetime('now', 'localtime'), ?, ?, ?, ?,
+                       datetime('now', 'localtime'), ?)""",
             (
                 project_id,
                 body.slot,
@@ -168,6 +217,7 @@ def create_task(
                 executor_name,
                 body.target,
                 user.username,
+                prompt_state["fingerprint"],
             ),
         )
         task_id = cur.lastrowid
@@ -252,6 +302,8 @@ def get_labeling_batch(
         schema = get_project_schema(conn, project_id)
         schema_payload = schema.model_dump(mode="json")
         result_contract = _mcp_result_contract(schema)
+        prompt_state = _prompt_state(conn, project_id, task["slot"] or 1, schema=schema)
+        _assert_task_prompt_stable(conn, task, prompt_state["fingerprint"])
 
         conn.execute(
             """UPDATE task_items SET status='pending', lease_token=NULL, lease_expires_at=NULL
@@ -286,6 +338,7 @@ def get_labeling_batch(
                 "rows": [],
                 "schema": schema_payload,
                 "result_contract": result_contract,
+                "prompt_fingerprint": prompt_state["fingerprint"],
                 "message": "目前沒有可領取的資料",
             }
 
@@ -300,14 +353,6 @@ def get_labeling_batch(
             (user.username, task_id),
         )
 
-        cfg = _mcp_config(conn, project_id, task["slot"] or 1)
-        examples = select_examples(conn, project_id, cfg)
-        project = conn.execute(
-            "SELECT annotation_instructions FROM projects WHERE id=?", (project_id,)
-        ).fetchone()
-        project_instructions = project["annotation_instructions"] if project else ""
-        prompt_template = cfg.get("prompt_template") or DEFAULT_TEMPLATE
-
         rows = []
         for row in items:
             primary_text = row["text"] or row["comment_content"] or ""
@@ -321,10 +366,10 @@ def get_labeling_batch(
                     "comment": row["comment_content"] or "",
                     "version": row["version"] or 0,
                     "prompt": build_generic_prompt(
-                        prompt_template,
-                        examples,
+                        prompt_state["prompt_template"],
+                        prompt_state["examples"],
                         primary_text,
-                        project_instructions,
+                        prompt_state["project_instructions"],
                         schema,
                     ),
                 }
@@ -338,6 +383,7 @@ def get_labeling_batch(
         "lease_minutes": 5,
         "schema": schema_payload,
         "result_contract": result_contract,
+        "prompt_fingerprint": prompt_state["fingerprint"],
         "rows": rows,
     }
 

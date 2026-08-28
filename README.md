@@ -1,10 +1,80 @@
 # Annotation App
 
-**目前版本：v5.0.0**
+**目前版本：v5.0.1**
 
 多人協作的通用資料標注、AI 自動分類與人工複查平台。前端使用 React/Vite，後端使用 FastAPI，正式資料儲存在 PostgreSQL。
 
-v5.0.0 起，平台不再綁定固定的分類欄位或特定標籤集合，而是改成以 **Input Mapping + Annotation Schema + Codebook** 描述每個專案的資料與分類規則。
+v5 系列不再綁定固定的分類欄位或特定標籤集合，而是改成以 **Input Mapping + Annotation Schema + Codebook + Shared Prompt** 描述每個專案的資料與分類規則。
+
+## v5.0.1 更新重點
+
+### Shared Prompt 與 Codebook 穩定化
+
+- Prompt 改為 **project-scoped Shared Prompt**，同一專案的所有 LLM slots 與 MCP Agent 共用同一份 Prompt。
+- Codebook 維持專案層級的分類規則來源，不需要替不同模型維護不同版本。
+- 舊版 slot-level `prompt_template` 保留相容欄位，但會同步為目前生效的 Shared Prompt。
+- 舊專案既有自訂 Prompt 會在 migration 時轉入新的 project-level Shared Prompt。
+
+推薦的責任分工：
+
+```text
+Shared Prompt       怎麼執行標注任務
+Codebook            怎麼判斷分類規則
+Annotation Schema   哪些輸出值合法、階層與 constraints
+Few-shot            人工複查後的正確範例
+Output Contract      模型必須回傳的結構
+```
+
+實際分類時，平台會組合：
+
+```text
+Shared Prompt
+  + Codebook
+  + Annotation Schema
+  + Few-shot examples
+  + current row text
+  + output contract
+        ↓
+Platform LLM API / MCP Agent
+```
+
+### Task-level Prompt Fingerprint
+
+為避免長任務執行到一半分類規則被修改，task 建立時會記錄 SHA-256 prompt fingerprint。
+
+Fingerprint 會涵蓋：
+
+- Shared Prompt
+- Codebook
+- Annotation Schema
+- Few-shot examples
+- Output contract
+
+實際 row text 不納入 fingerprint，因此它只代表「規則狀態」，不是 prediction history。
+
+若 task 建立後上述規則發生變更：
+
+- Platform API task 會停止並要求建立新任務。
+- MCP batch 會回傳 `PROMPT_RULES_CHANGED`，避免 Agent 使用新舊規則混跑同一個 task。
+
+Prediction 儲存邏輯仍維持原本的 overwrite semantics；v5.0.1 **沒有新增 prediction history**。
+
+### 分類並發設定
+
+- 進階分類設定中的 `Concurrency` 可設定 **1–100**。
+- 此數值代表單一分類 task 的應用層並發上限。
+- 目前平台以 `asyncio.Semaphore` 控制 task 內同時處理的 rows；實際 HTTP 並發仍可能受到 Python executor、HTTP client 與模型服務本身排程限制。
+
+### API / MCP 規則一致性
+
+Platform LLM API 與 MCP Agent 現在共用相同的：
+
+- Shared Prompt
+- Codebook
+- Annotation Schema
+- Prompt fingerprint policy
+
+因此切換執行方式時，不需要再手動複製 Prompt 或分類規則。
 
 ## v5.0.0 更新重點
 
@@ -113,6 +183,7 @@ v5.0.0 起，平台不再綁定固定的分類欄位或特定標籤集合，而�
 
 平台 API 與 MCP Agent 會使用同一份：
 
+- Shared Prompt
 - Annotation Schema
 - Codebook
 - Context fields
@@ -272,6 +343,7 @@ docker compose exec -T db \
 
 ## 版本歷程
 
+- `v5.0.1`：Shared Prompt / Codebook 規則穩定化、API / MCP 共用 prompt policy、task-level prompt fingerprint，以及分類 Concurrency 上限提高至 100。
 - `v5.0.0`：通用資料匯入與 Mapping、動態 Annotation Schema、generic canonical result、重新設計的自動分類 UI、專用 Codebook 編輯器、API / MCP 雙執行路徑、常駐任務中心與進階分類設定整理。
 - `v4.0.0`：Remote MCP 改用 OAuth 2.1 GUI onboarding，提供可撤銷、有期限的連線 token、scope／project 限制與 ChatGPT Custom MCP App 管理文件；PAT／CLI 模式改為進階 fallback。
 - `v3.0.2`：新增專案 Codebook、情感子類型「未確定」、完整子類型顯示，並修復 DB connection pool 洩漏。
