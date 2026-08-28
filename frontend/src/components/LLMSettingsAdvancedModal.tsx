@@ -245,11 +245,11 @@ function SlotPanel({
               <Input
                 type="number"
                 min={1}
-                max={20}
+                max={100}
                 value={cfg.concurrency}
                 onChange={event => setCfg(current => ({
                   ...current,
-                  concurrency: Math.max(1, Math.min(20, Number(event.target.value))),
+                  concurrency: Math.max(1, Math.min(100, Number(event.target.value))),
                 }))}
                 className="h-8 text-sm"
               />
