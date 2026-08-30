@@ -1,10 +1,32 @@
 # Annotation App
 
-**目前版本：v5.0.2**
+**目前版本：v5.0.3**
 
 多人協作的通用資料標注、AI 自動分類與人工複查平台。前端使用 React/Vite，後端使用 FastAPI，正式資料儲存在 PostgreSQL。
 
 v5 系列不再綁定固定的分類欄位或特定標籤集合，而是改成以 **Input Mapping + Annotation Schema + Codebook + Shared Prompt** 描述每個專案的資料與分類規則。
+
+## v5.0.3 更新重點
+
+### 只重跑解析失敗
+
+自動分類的「資料範圍」新增 **只重跑解析失敗**，用來快速重新處理模型已回傳內容、但 JSON / Annotation Schema 解析失敗的資料。
+
+- 新增 task target：`parse_failed`。
+- 只匹配所選結果 slot 中 `reason` 為 `⚠️ 解析失敗...` 的資料。
+- 不會把 HTTP error、429、timeout 或其他 transport failure 混入解析錯誤重跑。
+- Platform API 與 MCP Agent 都支援相同的解析失敗重跑範圍。
+- 多模型比較時，每個 slot 各自判斷自己的解析失敗資料，不會互相混用。
+- 任務建立時會把符合條件的 row snapshot 到 PostgreSQL `task_items`，因此同樣支援 v5.0.2 的 durable background execution、restart recovery、watchdog 與 lease recovery。
+- 若重跑後模型仍產生無法解析的輸出，該次任務仍會正常完成並保留解析失敗結果，不會自動進入無限 retry loop；之後可再次使用「只重跑解析失敗」。
+
+目前資料範圍共有：
+
+```text
+只分類待審資料
+只重跑解析失敗
+重新分類全部資料
+```
 
 ## v5.0.2 更新重點
 
@@ -400,6 +422,7 @@ docker compose exec -T db \
 
 ## 版本歷程
 
+- `v5.0.3`：新增「只重跑解析失敗」資料範圍，依結果 slot 精準重跑 JSON / Schema 解析錯誤；API / MCP 共用相同 target，並以 `task_items` snapshot 接續 v5.0.2 durable recovery 行為。
 - `v5.0.2`：API 分類任務改為 PostgreSQL durable checkpoints，支援瀏覽器關閉後持續執行、App/container restart 自動恢復、watchdog/lease recovery；LLM HTTP path 改為真正可達 100 並發的專用 executor、共享 connection pool、全域 in-flight guard 與 transient error retry/backoff。
 - `v5.0.1`：Shared Prompt / Codebook 規則穩定化、API / MCP 共用 prompt policy、task-level prompt fingerprint，以及分類 Concurrency 上限提高至 100。
 - `v5.0.0`：通用資料匯入與 Mapping、動態 Annotation Schema、generic canonical result、重新設計的自動分類 UI、專用 Codebook 編輯器、API / MCP 雙執行路徑、常駐任務中心與進階分類設定整理。

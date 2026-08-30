@@ -117,7 +117,7 @@ export interface Task {
   error: string | null
   execution_mode: 'api' | 'mcp'
   executor_name: string
-  target: 'pending' | 'all'
+  target: 'pending' | 'all' | 'parse_failed'
   created_by: string
   claimed_by: string
   last_activity_at: string | null
@@ -316,7 +316,7 @@ export const api = {
   listTasks: (projectId: number) =>
     request<Task[]>(`/projects/${projectId}/tasks`),
   createTask: (projectId: number, body: {
-    target: 'pending' | 'all'; slot: number; execution_mode: 'api' | 'mcp'; executor_name?: string
+    target: 'pending' | 'all' | 'parse_failed'; slot: number; execution_mode: 'api' | 'mcp'; executor_name?: string
   }) =>
     request<Task>(`/projects/${projectId}/tasks`, {
       method: 'POST',

@@ -24,7 +24,7 @@ ACTIVE_STATUSES = ("pending", "waiting_for_agent", "running")
 
 
 class CreateTaskRequest(BaseModel):
-    target: Literal["pending", "all"] = "pending"
+    target: Literal["pending", "all", "parse_failed"] = "pending"
     slot: int = Field(default=1, ge=1, le=3)
     execution_mode: Literal["api", "mcp"] = "api"
     executor_name: str = ""
@@ -49,8 +49,27 @@ class SubmitBatchRequest(BaseModel):
     results: list[LabelingResult]
 
 
-def _status_filter(target: str) -> str:
-    return "status = 'pending'" if target == "pending" else "status IN ('pending', 'corrected')"
+def _eligible_rows(conn, project_id: int, target: str, slot: int):
+    """Return the frozen row scope for a newly created labeling task."""
+    if target == "parse_failed":
+        return conn.execute(
+            """SELECT r.id
+               FROM rows r
+               JOIN row_llm_results rlr ON rlr.row_id=r.id AND rlr.slot=?
+               WHERE r.project_id=? AND rlr.reason LIKE '⚠️ 解析失敗%'
+               ORDER BY r.source_row_number, r.id""",
+            (slot, project_id),
+        ).fetchall()
+
+    status_filter = (
+        "r.status = 'pending'"
+        if target == "pending"
+        else "r.status IN ('pending', 'corrected')"
+    )
+    return conn.execute(
+        f"SELECT r.id FROM rows r WHERE r.project_id=? AND {status_filter} ORDER BY r.source_row_number, r.id",
+        (project_id,),
+    ).fetchall()
 
 
 def _get_task(conn, project_id: int, task_id: int):
@@ -222,15 +241,16 @@ def create_task(
         )
         task_id = cur.lastrowid
 
-        if body.execution_mode == "mcp":
-            eligible = conn.execute(
-                f"SELECT id FROM rows WHERE project_id=? AND {_status_filter(body.target)} ORDER BY source_row_number",
-                (project_id,),
-            ).fetchall()
-            conn.executemany(
-                "INSERT INTO task_items (task_id, row_id) VALUES (?, ?)",
-                [(task_id, row["id"]) for row in eligible],
-            )
+        # MCP tasks always freeze their row scope at creation. Parse-failure API
+        # retries do the same so the durable runner can resume the exact error set
+        # without needing special target logic during recovery.
+        if body.execution_mode == "mcp" or body.target == "parse_failed":
+            eligible = _eligible_rows(conn, project_id, body.target, body.slot)
+            if eligible:
+                conn.executemany(
+                    "INSERT INTO task_items (task_id, row_id) VALUES (?, ?)",
+                    [(task_id, row["id"]) for row in eligible],
+                )
             conn.execute("UPDATE tasks SET total=? WHERE id=?", (len(eligible), task_id))
             if not eligible:
                 conn.execute(

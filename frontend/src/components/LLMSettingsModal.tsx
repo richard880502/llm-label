@@ -154,7 +154,7 @@ export default function LLMSettingsModal({ projectId: pid, open, onClose, onTask
   const [instructionsMessage, setInstructionsMessage] = useState<string | null>(null)
 
   const [executionMode, setExecutionMode] = useState<'api' | 'mcp'>('api')
-  const [taskTarget, setTaskTarget] = useState<'pending' | 'all'>('pending')
+  const [taskTarget, setTaskTarget] = useState<'pending' | 'all' | 'parse_failed'>('pending')
   const [primarySlot, setPrimarySlot] = useState(1)
   const [compareModels, setCompareModels] = useState(false)
   const [compareSlots, setCompareSlots] = useState<number[]>([])
@@ -448,12 +448,23 @@ export default function LLMSettingsModal({ projectId: pid, open, onClose, onTask
 
               <div className="space-y-2">
                 <Label className="text-xs font-medium">資料範圍</Label>
-                <RadioGroup value={taskTarget} onValueChange={value => setTaskTarget(value as 'pending' | 'all')} className="grid gap-2 sm:grid-cols-2">
+                <RadioGroup
+                  value={taskTarget}
+                  onValueChange={value => setTaskTarget(value as 'pending' | 'all' | 'parse_failed')}
+                  className="grid gap-2 sm:grid-cols-3"
+                >
                   <label htmlFor="run-target-pending" className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 ${taskTarget === 'pending' ? 'border-primary bg-primary/5' : 'border-border'}`}>
                     <RadioGroupItem id="run-target-pending" value="pending" className="mt-0.5" />
                     <span>
                       <span className="block text-sm font-medium">只分類待審資料</span>
                       <span className="mt-0.5 block text-xs text-muted-foreground">目前約 {project?.pending ?? '—'} 筆，不重跑已審查資料。</span>
+                    </span>
+                  </label>
+                  <label htmlFor="run-target-parse-failed" className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 ${taskTarget === 'parse_failed' ? 'border-rose-400 bg-rose-50/50 dark:bg-rose-950/10' : 'border-border'}`}>
+                    <RadioGroupItem id="run-target-parse-failed" value="parse_failed" className="mt-0.5" />
+                    <span>
+                      <span className="block text-sm font-medium">只重跑解析失敗</span>
+                      <span className="mt-0.5 block text-xs text-muted-foreground">依選擇的結果位置，只重跑 JSON / Schema 解析失敗；不包含 HTTP、429 或 timeout。</span>
                     </span>
                   </label>
                   <label htmlFor="run-target-all" className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 ${taskTarget === 'all' ? 'border-amber-400 bg-amber-50/50 dark:bg-amber-950/10' : 'border-border'}`}>
