@@ -11,8 +11,8 @@ from .classifier_runtime import (
     compatibility_projection,
     mark_task_cancelled,
     parse_response,
-    run_classification_task,
 )
+from .durable_runtime import resume_stale_api_tasks, run_classification_task
 
 
 # Deprecated compatibility exports for backend/routers/rows.py.
@@ -33,5 +33,6 @@ __all__ = [
     "has_valid_emotional_hierarchy",
     "mark_task_cancelled",
     "parse_response",
+    "resume_stale_api_tasks",
     "run_classification_task",
 ]
