@@ -19,7 +19,7 @@ from .routers import schemas as schemas_router
 from .routers import tasks as tasks_router
 from .routers import users as users_router
 
-app = FastAPI(title="Annotation Review Platform")
+app = FastAPI(title="Annotation Review Platform", version="5.0.2")
 
 app.add_middleware(
     CORSMiddleware,
