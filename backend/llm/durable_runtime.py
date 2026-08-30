@@ -1,15 +1,11 @@
-"""Durable, resumable execution for API labeling tasks.
-
-The HTTP request that creates a task may disappear, and the web process may be
-restarted. Progress therefore lives in PostgreSQL ``task_items`` instead of only
-in Python memory. On restart, active API tasks can be submitted again safely:
-completed items are skipped and only pending/expired items are processed.
-"""
+"""Durable, resumable execution for API labeling tasks."""
 
 import asyncio
 import json
 import os
 import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 
 from ..annotation.models import AnnotationResult
 from ..annotation.project_service import get_project_schema
@@ -35,12 +31,22 @@ def _positive_int_env(name: str, default: int) -> int:
     return value if value > 0 else default
 
 
-# This is deliberately independent from per-LLM ``concurrency``. It limits how
-# many complete labeling tasks may consume HTTP/DB resources at the same time.
+# One UI slot may request concurrency=100. Keep a real blocking-I/O executor of
+# the same size; asyncio's default executor is usually ~32 threads and would make
+# a configured concurrency of 100 mostly cosmetic.
 API_TASK_WORKERS = _positive_int_env("API_TASK_WORKERS", 2)
+LLM_EXECUTOR_WORKERS = _positive_int_env("LLM_EXECUTOR_WORKERS", 100)
+API_TASK_WATCHDOG_SECONDS = _positive_int_env("API_TASK_WATCHDOG_SECONDS", 30)
+
 _task_slots = threading.BoundedSemaphore(API_TASK_WORKERS)
-_recovery_lock = threading.Lock()
+_llm_executor = ThreadPoolExecutor(
+    max_workers=LLM_EXECUTOR_WORKERS,
+    thread_name_prefix="llm-http",
+)
+_active_lock = threading.Lock()
+_active_tasks: set[int] = set()
 _recovery_threads: set[int] = set()
+_watchdog_started = False
 
 
 def _status_filter(target: str) -> str:
@@ -56,11 +62,12 @@ def _task_is_active(task_id: int) -> bool:
 
 
 def _ensure_task_items(conn, task_id: int, project_id: int, target: str) -> tuple[int, int]:
-    """Create the task snapshot once and return ``(total, completed)``.
+    """Create a durable snapshot and return (total, completed).
 
-    Legacy API tasks created before this feature have no task_items. For those
-    tasks only, results written after the task creation timestamp are treated as
-    completed checkpoints so a stuck production task does not restart at row 1.
+    Legacy API tasks created before this change have no task_items. Their LLM
+    results written after task.created_at are backfilled as done checkpoints, so
+    an already-stuck production task resumes near its previous position instead
+    of paying for the same rows again.
     """
     existing = conn.execute(
         "SELECT COUNT(*) AS count FROM task_items WHERE task_id=?", (task_id,)
@@ -76,9 +83,6 @@ def _ensure_task_items(conn, task_id: int, project_id: int, target: str) -> tupl
                 "INSERT INTO task_items (task_id, row_id, status) VALUES (?, ?, 'pending') ON CONFLICT (task_id, row_id) DO NOTHING",
                 [(task_id, row["id"]) for row in eligible],
             )
-
-            # Backfill checkpoints for API tasks that were already running before
-            # this migration. Timestamps use the same sortable local-time format.
             conn.execute(
                 """UPDATE task_items ti
                    SET status='done', completed_at=COALESCE(ti.completed_at, datetime('now', 'localtime'))
@@ -93,7 +97,6 @@ def _ensure_task_items(conn, task_id: int, project_id: int, target: str) -> tupl
                 (task_id,),
             )
 
-    # Anything leased by a process that died is retryable after the lease expires.
     conn.execute(
         """UPDATE task_items
            SET status='pending', lease_token=NULL, lease_expires_at=NULL
@@ -112,7 +115,6 @@ def _ensure_task_items(conn, task_id: int, project_id: int, target: str) -> tupl
 
 
 def _claim_item(task_id: int, row_id: int) -> bool:
-    """Lease one row before the external LLM request to prevent duplicate work."""
     with get_db() as conn:
         result = conn.execute(
             """UPDATE task_items
@@ -202,7 +204,7 @@ async def _run_task(task_id: int, project_id: int, target: str, slot: int) -> No
             conn.commit()
         return
 
-    concurrency = max(1, int(cfg.get("concurrency") or 1))
+    concurrency = max(1, min(100, int(cfg.get("concurrency") or 1)))
     api_url = cfg.get("api_url", "")
     model = cfg.get("model", "")
     configured_name = (cfg.get("name") or "").strip()
@@ -250,7 +252,7 @@ async def _run_task(task_id: int, project_id: int, target: str, slot: int) -> No
                 )
                 try:
                     raw = await loop.run_in_executor(
-                        None,
+                        _llm_executor,
                         lambda u=api_url, m=model, p=prompt, k=api_key, eb=extra_body: call_llm(
                             u, m, p, api_key=k, extra_body=eb
                         ),
@@ -371,7 +373,6 @@ async def _run_task(task_id: int, project_id: int, target: str, slot: int) -> No
                 (processed, task_id),
             )
         else:
-            # Keep it resumable instead of permanently failing the whole job.
             detail = f"{len(errors)} item(s) deferred for retry" if errors else "task interrupted; pending items remain"
             conn.execute(
                 """UPDATE tasks SET status='pending', processed=?, error=?,
@@ -387,9 +388,13 @@ async def run_classification_task(
     target: str,
     slot: int,
 ) -> None:
-    """Run one task with a process-wide cap on concurrently active API jobs."""
-    loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, _task_slots.acquire)
+    """Run one API task once; duplicate submissions in this process are ignored."""
+    with _active_lock:
+        if task_id in _active_tasks:
+            return
+        _active_tasks.add(task_id)
+
+    _task_slots.acquire()
     try:
         await _run_task(task_id, project_id, target, slot)
     except Exception as error:
@@ -405,6 +410,8 @@ async def run_classification_task(
     finally:
         _task_slots.release()
         _cancelled_tasks.discard(task_id)
+        with _active_lock:
+            _active_tasks.discard(task_id)
 
 
 def _resume_one(task: dict) -> None:
@@ -418,17 +425,12 @@ def _resume_one(task: dict) -> None:
             )
         )
     finally:
-        with _recovery_lock:
+        with _active_lock:
             _recovery_threads.discard(task["id"])
 
 
 def resume_stale_api_tasks() -> int:
-    """Resume API tasks left active by a previous process/container.
-
-    Safe to call on every application startup. ``task_items`` checkpoints make
-    re-submission idempotent; the task semaphore prevents a restart storm from
-    exhausting DB or upstream HTTP capacity.
-    """
+    """Scan active API tasks and submit anything not running in this process."""
     with get_db() as conn:
         tasks = conn.execute(
             """SELECT * FROM tasks
@@ -439,8 +441,8 @@ def resume_stale_api_tasks() -> int:
     started = 0
     for row in tasks:
         task = dict(row)
-        with _recovery_lock:
-            if task["id"] in _recovery_threads:
+        with _active_lock:
+            if task["id"] in _active_tasks or task["id"] in _recovery_threads:
                 continue
             _recovery_threads.add(task["id"])
         thread = threading.Thread(
@@ -452,3 +454,28 @@ def resume_stale_api_tasks() -> int:
         thread.start()
         started += 1
     return started
+
+
+def _watchdog_loop() -> None:
+    while True:
+        time.sleep(API_TASK_WATCHDOG_SECONDS)
+        try:
+            resume_stale_api_tasks()
+        except Exception:
+            # Recovery is best effort. A transient DB outage must not kill the
+            # watchdog; the next scan will try again.
+            continue
+
+
+def start_api_task_watchdog() -> None:
+    global _watchdog_started
+    with _active_lock:
+        if _watchdog_started:
+            return
+        _watchdog_started = True
+    thread = threading.Thread(
+        target=_watchdog_loop,
+        name="api-task-watchdog",
+        daemon=True,
+    )
+    thread.start()
