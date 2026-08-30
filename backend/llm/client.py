@@ -1,5 +1,16 @@
 import json
-from urllib import error, request as urllib_request
+import os
+import threading
+
+import httpx
+
+
+def _positive_int_env(name: str, default: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+    return value if value > 0 else default
 
 
 def _auth_headers(api_key: str) -> dict:
@@ -25,6 +36,35 @@ def normalize_llm_content(content: str) -> str:
     return content.replace("\\_", "_")
 
 
+# One shared client means API task concurrency reuses keep-alive TCP/TLS
+# connections instead of opening a fresh socket for every row. httpx.Client is
+# thread-safe and call_llm is invoked from the classifier's executor threads.
+_HTTP_MAX_CONNECTIONS = _positive_int_env("LLM_HTTP_MAX_CONNECTIONS", 100)
+_HTTP_MAX_KEEPALIVE = min(
+    _HTTP_MAX_CONNECTIONS,
+    _positive_int_env("LLM_HTTP_MAX_KEEPALIVE_CONNECTIONS", 40),
+)
+_HTTP_KEEPALIVE_EXPIRY = float(os.getenv("LLM_HTTP_KEEPALIVE_EXPIRY_SECONDS", "30"))
+_client_lock = threading.Lock()
+_client: httpx.Client | None = None
+
+
+def _get_client() -> httpx.Client:
+    global _client
+    if _client is None:
+        with _client_lock:
+            if _client is None:
+                _client = httpx.Client(
+                    limits=httpx.Limits(
+                        max_connections=_HTTP_MAX_CONNECTIONS,
+                        max_keepalive_connections=_HTTP_MAX_KEEPALIVE,
+                        keepalive_expiry=_HTTP_KEEPALIVE_EXPIRY,
+                    ),
+                    follow_redirects=True,
+                )
+    return _client
+
+
 def call_llm(
     api_url: str,
     model: str,
@@ -41,25 +81,27 @@ def call_llm(
     }
     if extra_body:
         payload.update(extra_body)
-    req = urllib_request.Request(
+
+    response = _get_client().post(
         f"{api_url.rstrip('/')}/chat/completions",
-        data=json.dumps(payload).encode(),
+        json=payload,
         headers=_auth_headers(api_key),
-        method="POST",
+        timeout=httpx.Timeout(timeout),
     )
-    with urllib_request.urlopen(req, timeout=timeout) as resp:
-        data = json.loads(resp.read())
+    response.raise_for_status()
+    data = response.json()
     return normalize_llm_content(data["choices"][0]["message"]["content"])
 
 
 def list_models(api_url: str, api_key: str = "", timeout: int = 10) -> list[str]:
     try:
-        req = urllib_request.Request(
+        response = _get_client().get(
             f"{api_url.rstrip('/')}/models",
             headers=_auth_headers(api_key),
+            timeout=httpx.Timeout(timeout),
         )
-        with urllib_request.urlopen(req, timeout=timeout) as resp:
-            data = json.loads(resp.read())
+        response.raise_for_status()
+        data = response.json()
         return [m["id"] for m in data.get("data", [])]
     except Exception:
         return []
