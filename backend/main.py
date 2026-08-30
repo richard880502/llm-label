@@ -9,7 +9,7 @@ from psycopg_pool import PoolTimeout
 from .annotation.migrations import ensure_annotation_schema_columns
 from .auth import get_current_user
 from .database import init_db
-from .llm.classifier import resume_stale_api_tasks
+from .llm.classifier import resume_stale_api_tasks, start_api_task_watchdog
 from .routers import export, projects, rows
 from .routers import auth as auth_router
 from .routers import imports as imports_router
@@ -41,10 +41,11 @@ async def pool_timeout_handler(request: Request, exc: PoolTimeout) -> JSONRespon
 def on_startup():
     init_db()
     ensure_annotation_schema_columns()
-    # API labeling progress is persisted in task_items. Any task left pending or
-    # running by a previous process/container is safe to resume from its stored
-    # checkpoints; completed rows will not be sent to the LLM again.
+    # Immediately recover tasks left by the previous process, then keep scanning
+    # periodically for retryable/pending API tasks. The in-process active-task
+    # registry prevents the watchdog from launching a duplicate local runner.
     resume_stale_api_tasks()
+    start_api_task_watchdog()
 
 
 app.include_router(auth_router.router, prefix="/api/auth", tags=["auth"])
