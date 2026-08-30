@@ -12,7 +12,11 @@ from .classifier_runtime import (
     mark_task_cancelled,
     parse_response,
 )
-from .durable_runtime import resume_stale_api_tasks, run_classification_task
+from .durable_runtime import (
+    resume_stale_api_tasks,
+    run_classification_task,
+    start_api_task_watchdog,
+)
 
 
 # Deprecated compatibility exports for backend/routers/rows.py.
@@ -35,4 +39,5 @@ __all__ = [
     "parse_response",
     "resume_stale_api_tasks",
     "run_classification_task",
+    "start_api_task_watchdog",
 ]
