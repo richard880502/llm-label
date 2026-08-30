@@ -81,17 +81,9 @@ export interface Adjacent {
 }
 
 export interface RowUpdate {
-  corrected_result?: AnnotationResult | null
   corrected_relevance?: string | null; corrected_labels?: string[]
   corrected_emotional_subtypes?: string[]; reviewer_note?: string; status?: string
   version?: number
-}
-
-export interface AnnotationResult {
-  relevance?: string | null
-  labels: string[]
-  reason?: string
-  metadata?: Record<string, unknown>
 }
 
 export interface PresenceEntry {
