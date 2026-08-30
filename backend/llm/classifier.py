@@ -11,7 +11,11 @@ from .classifier_runtime import (
     compatibility_projection,
     mark_task_cancelled,
     parse_response,
+)
+from .durable_runtime import (
+    resume_stale_api_tasks,
     run_classification_task,
+    start_api_task_watchdog,
 )
 
 
@@ -33,5 +37,7 @@ __all__ = [
     "has_valid_emotional_hierarchy",
     "mark_task_cancelled",
     "parse_response",
+    "resume_stale_api_tasks",
     "run_classification_task",
+    "start_api_task_watchdog",
 ]

@@ -1,10 +1,66 @@
 # Annotation App
 
-**目前版本：v5.0.1**
+**目前版本：v5.0.2**
 
 多人協作的通用資料標注、AI 自動分類與人工複查平台。前端使用 React/Vite，後端使用 FastAPI，正式資料儲存在 PostgreSQL。
 
 v5 系列不再綁定固定的分類欄位或特定標籤集合，而是改成以 **Input Mapping + Annotation Schema + Codebook + Shared Prompt** 描述每個專案的資料與分類規則。
+
+## v5.0.2 更新重點
+
+### Durable API Background Tasks
+
+平台模型 API 任務改成以 PostgreSQL `task_items` 保存逐列 checkpoint，不再只依賴 FastAPI process 內的背景執行狀態。
+
+因此 API 分類任務現在具備：
+
+- 關閉自動分類視窗或直接關掉瀏覽器後，後端任務仍會繼續執行。
+- FastAPI / App container restart 後，啟動流程會自動掃描 `pending` / `running` API tasks 並恢復尚未完成的項目。
+- 每 30 秒 watchdog 重新掃描可恢復任務，避免 transient error 後任務永久卡住。
+- 每個 row 在呼叫 LLM 前先取得 lease；process 中斷後，過期 lease 會重新回到 `pending`。
+- 已完成的 `task_items` 不會再次送到 LLM，避免 restart 後重複消耗 token。
+- Task cancellation 與進度以 PostgreSQL 狀態為主要依據，不再只依賴瀏覽器連線。
+
+對於升級前已經卡住、尚未建立 `task_items` 的舊 API task，v5.0.2 第一次 recovery 時會建立 snapshot，並以 task 建立後已寫入的 `row_llm_results` 回填完成 checkpoint，盡量從原本進度附近繼續執行，而不是重新從第 1 筆開始。
+
+目前 durable queue 直接使用既有 PostgreSQL，不需要額外部署 Redis / Celery。
+
+### 真實 100 並發與 HTTP Connection Pool
+
+進階分類設定原本已允許 `Concurrency=1–100`，但舊版 blocking HTTP 呼叫仍可能受到 Python 預設 executor thread 數限制，因此設定 100 不代表一定真的同時送出 100 個 request。
+
+v5.0.2 將整條 LLM request path 對齊到 100 並發：
+
+```text
+Single task concurrency          <= 100
+Dedicated LLM executor workers  = 100
+Global LLM in-flight limit      = 100
+HTTP max connections            = 128
+HTTP keep-alive connections     = 100
+```
+
+- 使用專用 `ThreadPoolExecutor` 執行 blocking LLM HTTP requests，不再受 asyncio 預設 executor 約數十條 thread 的隱性限制。
+- `httpx.Client` 在整個 process 共用 connection pool / keep-alive，不再每筆資料重新建立 TCP/TLS connection。
+- 多個 API tasks 可以同時 active，但共用全站 LLM in-flight 上限，避免兩張 concurrency=100 的 task 突然同時灌出 200 個 requests。
+- 對 HTTP `408`、`429`、`5xx`、connection error 與 timeout 提供 retry + exponential backoff。
+- PostgreSQL connection 不會在等待 LLM response 時被長時間占用，因此 DB pool 可以與 HTTP concurrency 分開配置。
+
+### v5.0.2 執行參數
+
+以下參數可透過環境變數調整；`.env.example` 已提供預設值：
+
+| 變數 | 預設 | 說明 |
+| --- | ---: | --- |
+| `API_TASK_WORKERS` | `2` | 同一個 App process 最多同時執行幾張 API task |
+| `API_TASK_WATCHDOG_SECONDS` | `30` | 掃描可恢復 API task 的間隔 |
+| `LLM_EXECUTOR_WORKERS` | `100` | blocking LLM HTTP executor thread 數 |
+| `LLM_MAX_CONCURRENT_REQUESTS` | `100` | 全站最大 LLM in-flight requests |
+| `LLM_HTTP_MAX_CONNECTIONS` | `128` | HTTP pool 最大連線數 |
+| `LLM_HTTP_MAX_KEEPALIVE_CONNECTIONS` | `100` | HTTP keep-alive 連線數 |
+| `LLM_HTTP_KEEPALIVE_EXPIRY_SECONDS` | `30` | keep-alive connection expiry |
+| `LLM_MAX_RETRIES` | `3` | transient LLM HTTP error 最大重試次數 |
+
+如果上游 vLLM / Triton / OpenAI-compatible endpoint 已確認可以承受更高流量，可以再提高全站 LLM request / executor / HTTP pool 上限；單一 task 的前台設定目前仍限制在 100。
 
 ## v5.0.1 更新重點
 
@@ -63,7 +119,7 @@ Prediction 儲存邏輯仍維持原本的 overwrite semantics；v5.0.1 **沒有�
 
 - 進階分類設定中的 `Concurrency` 可設定 **1–100**。
 - 此數值代表單一分類 task 的應用層並發上限。
-- 目前平台以 `asyncio.Semaphore` 控制 task 內同時處理的 rows；實際 HTTP 並發仍可能受到 Python executor、HTTP client 與模型服務本身排程限制。
+- v5.0.1 仍可能受到 Python executor、HTTP client 與模型服務本身排程限制；此限制在 v5.0.2 已進一步修正。
 
 ### API / MCP 規則一致性
 
@@ -174,7 +230,7 @@ Platform LLM API 與 MCP Agent 現在共用相同的：
 ```text
 自動分類
 ├─ 平台模型 API
-│  └─ 由後端背景 worker 呼叫已設定的 OpenAI-compatible API
+│  └─ 由後端 durable background runtime 呼叫已設定的 OpenAI-compatible API
 │
 └─ MCP Agent
    ├─ Codex / ChatGPT
@@ -261,7 +317,7 @@ Codebook 與 Few-shot 都屬於分類品質設定，但只有 Codebook 是日常
 - MCP：公開 endpoint 為 `/mcp`，GUI App 使用 OAuth 2.1，CLI 可使用 PAT。
 - Caddy：本地 HTTPS／反向代理需要時啟動。
 
-PostgreSQL 資料保存在 Docker named volume `annotation-app_annotation_db`，不會因 App 容器重建而消失。
+PostgreSQL 資料保存在 Docker named volume `annotation-app_annotation_db`，不會因 App 容器重建而消失。API task checkpoint 同樣保存在 PostgreSQL，因此 App restart 後可以恢復尚未完成的分類工作。
 
 ## 初次設定
 
@@ -336,13 +392,15 @@ docker compose exec -T db \
 - App 只透過私有 `DATABASE_URL` 連接 PostgreSQL。
 - 正式網域必須使用 HTTPS。
 - OAuth metadata 位於 `/.well-known/oauth-protected-resource/mcp` 與 `/.well-known/oauth-authorization-server`。
-- PostgreSQL 必須掛載持久化磁碟並設定定期備份。
+- PostgreSQL 必須掛載持久化磁碟並設定定期備份；API task checkpoint 也依賴這份資料庫持久性。
+- `LLM_MAX_CONCURRENT_REQUESTS` 應依上游 LLM server / provider 能承受的吞吐量設定，避免單純提高前台 concurrency 導致 429 或排隊時間暴增。
 - 不要將 PostgreSQL port 直接開放到公網。
 - `SECRET_KEY`、管理員密碼、LLM API Key 與其他 token 必須使用非公開環境變數。
 - SQLite 只保留作為歷史備份，不再是正式資料庫。
 
 ## 版本歷程
 
+- `v5.0.2`：API 分類任務改為 PostgreSQL durable checkpoints，支援瀏覽器關閉後持續執行、App/container restart 自動恢復、watchdog/lease recovery；LLM HTTP path 改為真正可達 100 並發的專用 executor、共享 connection pool、全域 in-flight guard 與 transient error retry/backoff。
 - `v5.0.1`：Shared Prompt / Codebook 規則穩定化、API / MCP 共用 prompt policy、task-level prompt fingerprint，以及分類 Concurrency 上限提高至 100。
 - `v5.0.0`：通用資料匯入與 Mapping、動態 Annotation Schema、generic canonical result、重新設計的自動分類 UI、專用 Codebook 編輯器、API / MCP 雙執行路徑、常駐任務中心與進階分類設定整理。
 - `v4.0.0`：Remote MCP 改用 OAuth 2.1 GUI onboarding，提供可撤銷、有期限的連線 token、scope／project 限制與 ChatGPT Custom MCP App 管理文件；PAT／CLI 模式改為進階 fallback。

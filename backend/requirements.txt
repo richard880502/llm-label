@@ -9,3 +9,4 @@ google-auth==2.38.0
 pyotp==2.9.0
 psycopg[binary]==3.2.10
 psycopg-pool==3.2.3
+httpx>=0.27,<1
