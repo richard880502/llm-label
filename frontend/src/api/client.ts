@@ -59,7 +59,7 @@ export interface LLMResult {
 export interface LLMSlotConfig {
   slot: number; name: string; api_url: string; api_key: string; model: string
   prompt_template: string; examples_mode: string; examples_per_label: number; concurrency: number
-  extra_body: string; has_api_key: boolean
+  timeout_seconds: number; extra_body: string; has_api_key: boolean
 }
 
 export interface LegacyLLMConfig {
