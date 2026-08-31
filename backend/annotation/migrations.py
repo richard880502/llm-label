@@ -27,6 +27,13 @@ def ensure_annotation_schema_columns() -> None:
         # the primary (slot 1) projection used by the main review flow.
         conn.execute("ALTER TABLE row_llm_results ADD COLUMN IF NOT EXISTS result JSONB")
 
+        # Each configured model can have a different response speed. Keep its request
+        # timeout beside the rest of the slot configuration so API tasks can use it and
+        # size their durable row leases to the same request/retry budget.
+        conn.execute(
+            "ALTER TABLE llm_configs ADD COLUMN IF NOT EXISTS timeout_seconds INTEGER NOT NULL DEFAULT 180"
+        )
+
         # Tasks keep only a compact rule fingerprint, not prediction history. This lets
         # API and MCP executions detect prompt/codebook drift without storing old outputs.
         conn.execute(

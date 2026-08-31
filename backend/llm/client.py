@@ -49,6 +49,19 @@ _client_lock = threading.Lock()
 _client: httpx.Client | None = None
 
 
+def request_cycle_budget_seconds(timeout: int) -> int:
+    """Upper-bound a full request + retry cycle for durable task leases.
+
+    Retry-After is capped at 30 seconds per retry. Add a safety margin so a row's
+    lease cannot expire while its configured model is still legitimately running.
+    """
+    timeout = max(1, int(timeout))
+    attempts = _LLM_MAX_RETRIES + 1
+    retry_wait_budget = 30 * _LLM_MAX_RETRIES
+    safety_margin = max(60, timeout // 10)
+    return timeout * attempts + retry_wait_budget + safety_margin
+
+
 def _get_client() -> httpx.Client:
     global _client
     if _client is None:

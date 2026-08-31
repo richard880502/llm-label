@@ -4,7 +4,7 @@ import json
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 try:
     from openpyxl import load_workbook as _load_wb
@@ -201,6 +201,7 @@ class LLMSlotUpdate(BaseModel):
     examples_mode: str = "corrected_only"
     examples_per_label: int = 3
     concurrency: int = 1
+    timeout_seconds: int = Field(default=180, ge=30, le=1800)
     extra_body: str = ""  # 進階：合併進 request body 的額外 JSON 參數（例如關閉 thinking mode）
 
 
@@ -265,7 +266,7 @@ def list_llm_configs(project_id: int, _: CurrentUser = Depends(get_current_user)
                 "name": f"LLM {slot}", "api_url": "", "api_key": "", "model": "",
                 "prompt_template": shared_prompt,
                 "examples_mode": "corrected_only", "examples_per_label": 3, "concurrency": 1,
-                "extra_body": "", "has_api_key": False,
+                "timeout_seconds": 180, "extra_body": "", "has_api_key": False,
             })
     return result
 
@@ -288,8 +289,8 @@ def set_llm_config_slot(project_id: int, slot: int, body: LLMSlotUpdate, _: Curr
         resolved_key = _resolve_api_key(body.api_key, existing["api_key"] if existing else "")
         conn.execute(
             """INSERT INTO llm_configs
-               (project_id, slot, name, api_url, api_key, model, prompt_template, examples_mode, examples_per_label, concurrency, extra_body)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               (project_id, slot, name, api_url, api_key, model, prompt_template, examples_mode, examples_per_label, concurrency, timeout_seconds, extra_body)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT (project_id, slot) DO UPDATE SET
                    name=EXCLUDED.name,
                    api_url=EXCLUDED.api_url,
@@ -299,11 +300,12 @@ def set_llm_config_slot(project_id: int, slot: int, body: LLMSlotUpdate, _: Curr
                    examples_mode=EXCLUDED.examples_mode,
                    examples_per_label=EXCLUDED.examples_per_label,
                    concurrency=EXCLUDED.concurrency,
+                   timeout_seconds=EXCLUDED.timeout_seconds,
                    extra_body=EXCLUDED.extra_body""",
             (project_id, slot, body.name or f"LLM {slot}",
              body.api_url, resolved_key, body.model,
              body.prompt_template, body.examples_mode, body.examples_per_label, max(1, body.concurrency),
-             body.extra_body),
+             body.timeout_seconds, body.extra_body),
         )
         try:
             shared_prompt = set_shared_prompt_template(conn, project_id, body.prompt_template)
