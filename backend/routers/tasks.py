@@ -56,7 +56,7 @@ def _eligible_rows(conn, project_id: int, target: str, slot: int):
             """SELECT r.id
                FROM rows r
                JOIN row_llm_results rlr ON rlr.row_id=r.id AND rlr.slot=?
-               WHERE r.project_id=? AND rlr.reason LIKE '⚠️ 解析失敗%'
+               WHERE r.project_id=? AND rlr.reason LIKE '⚠️%'
                ORDER BY r.source_row_number, r.id""",
             (slot, project_id),
         ).fetchall()
@@ -241,9 +241,8 @@ def create_task(
         )
         task_id = cur.lastrowid
 
-        # MCP tasks always freeze their row scope at creation. Parse-failure API
-        # retries do the same so the durable runner can resume the exact error set
-        # without needing special target logic during recovery.
+        # MCP tasks always freeze their row scope at creation. Failure-retry API
+        # tasks do the same so the durable runner resumes the exact error set.
         if body.execution_mode == "mcp" or body.target == "parse_failed":
             eligible = _eligible_rows(conn, project_id, body.target, body.slot)
             if eligible:
