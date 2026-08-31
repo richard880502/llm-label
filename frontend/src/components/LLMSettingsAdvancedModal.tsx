@@ -20,6 +20,7 @@ const EMPTY: SlotCfg = {
   examples_mode: 'corrected_only',
   examples_per_label: 3,
   concurrency: 1,
+  timeout_seconds: 180,
   extra_body: '',
   has_api_key: false,
 }
@@ -239,7 +240,7 @@ function SlotPanel({
             </div>
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-[9rem_1fr]">
+          <div className="grid gap-4 sm:grid-cols-[9rem_10rem_1fr]">
             <div className="space-y-1.5">
               <Label className="text-xs">並發數</Label>
               <Input
@@ -253,6 +254,21 @@ function SlotPanel({
                 }))}
                 className="h-8 text-sm"
               />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Timeout（秒）</Label>
+              <Input
+                type="number"
+                min={30}
+                max={1800}
+                value={cfg.timeout_seconds}
+                onChange={event => setCfg(current => ({
+                  ...current,
+                  timeout_seconds: Math.max(30, Math.min(1800, Number(event.target.value))),
+                }))}
+                className="h-8 text-sm"
+              />
+              <p className="text-[11px] text-muted-foreground">單次 request，30–1800 秒。</p>
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs">額外 Request Body <span className="font-normal text-muted-foreground">（JSON，選填）</span></Label>
@@ -421,6 +437,7 @@ export default function LLMSettingsAdvancedModal({ projectId: pid, open, onClose
           examples_mode: config.examples_mode,
           examples_per_label: config.examples_per_label,
           concurrency: config.concurrency ?? 1,
+          timeout_seconds: config.timeout_seconds ?? 180,
           extra_body: config.extra_body ?? '',
           has_api_key: config.has_api_key ?? false,
         }
