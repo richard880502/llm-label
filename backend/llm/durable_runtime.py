@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from ..annotation.models import AnnotationResult
 from ..annotation.project_service import get_project_schema
 from ..database import DatabaseRow, get_db
-from .client import call_llm
+from .client import call_llm, request_cycle_budget_seconds
 from .classifier_runtime import (
     _cancelled_tasks,
     _empty_text_result,
@@ -114,14 +114,17 @@ def _ensure_task_items(conn, task_id: int, project_id: int, target: str) -> tupl
     return total, completed
 
 
-def _claim_item(task_id: int, row_id: int) -> bool:
+def _claim_item(task_id: int, row_id: int, lease_seconds: int) -> bool:
     with get_db() as conn:
         result = conn.execute(
             """UPDATE task_items
                SET status='leased', lease_token='api-worker',
-                   lease_expires_at=datetime('now', 'localtime', '+5 minutes')
+                   lease_expires_at=to_char(
+                       (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Taipei') + (? * interval '1 second'),
+                       'YYYY-MM-DD HH24:MI:SS'
+                   )
                WHERE task_id=? AND row_id=? AND status='pending'""",
-            (task_id, row_id),
+            (lease_seconds, task_id, row_id),
         )
         claimed = result.rowcount == 1
         if claimed:
@@ -205,6 +208,8 @@ async def _run_task(task_id: int, project_id: int, target: str, slot: int) -> No
         return
 
     concurrency = max(1, min(100, int(cfg.get("concurrency") or 1)))
+    timeout_seconds = max(30, min(1800, int(cfg.get("timeout_seconds") or 180)))
+    lease_seconds = request_cycle_budget_seconds(timeout_seconds)
     api_url = cfg.get("api_url", "")
     model = cfg.get("model", "")
     configured_name = (cfg.get("name") or "").strip()
@@ -235,7 +240,7 @@ async def _run_task(task_id: int, project_id: int, target: str, slot: int) -> No
     loop = asyncio.get_running_loop()
 
     async def process_row(row: DatabaseRow) -> None:
-        if not _task_is_active(task_id) or not _claim_item(task_id, row["id"]):
+        if not _task_is_active(task_id) or not _claim_item(task_id, row["id"], lease_seconds):
             return
 
         try:
@@ -253,8 +258,8 @@ async def _run_task(task_id: int, project_id: int, target: str, slot: int) -> No
                 try:
                     raw = await loop.run_in_executor(
                         _llm_executor,
-                        lambda u=api_url, m=model, p=prompt, k=api_key, eb=extra_body: call_llm(
-                            u, m, p, api_key=k, extra_body=eb
+                        lambda u=api_url, m=model, p=prompt, k=api_key, t=timeout_seconds, eb=extra_body: call_llm(
+                            u, m, p, api_key=k, timeout=t, extra_body=eb
                         ),
                     )
                     parsed = parse_response(raw, schema)
