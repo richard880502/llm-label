@@ -463,8 +463,8 @@ export default function LLMSettingsModal({ projectId: pid, open, onClose, onTask
                   <label htmlFor="run-target-parse-failed" className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 ${taskTarget === 'parse_failed' ? 'border-rose-400 bg-rose-50/50 dark:bg-rose-950/10' : 'border-border'}`}>
                     <RadioGroupItem id="run-target-parse-failed" value="parse_failed" className="mt-0.5" />
                     <span>
-                      <span className="block text-sm font-medium">只重跑解析失敗</span>
-                      <span className="mt-0.5 block text-xs text-muted-foreground">依選擇的結果位置，只重跑 JSON / Schema 解析失敗；不包含 HTTP、429 或 timeout。</span>
+                      <span className="block text-sm font-medium">只重跑失敗</span>
+                      <span className="mt-0.5 block text-xs text-muted-foreground">依選擇的結果位置，只重跑所有標記為失敗的結果，例如解析失敗、HTTP / 429、timeout 或其他 LLM 呼叫失敗。</span>
                     </span>
                   </label>
                   <label htmlFor="run-target-all" className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 ${taskTarget === 'all' ? 'border-amber-400 bg-amber-50/50 dark:bg-amber-950/10' : 'border-border'}`}>
