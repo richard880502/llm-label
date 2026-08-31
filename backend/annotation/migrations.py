@@ -77,7 +77,7 @@ def ensure_annotation_schema_columns() -> None:
             if isinstance(candidate, str) and candidate.strip():
                 conn.execute(
                     "UPDATE projects SET shared_prompt_template=? WHERE id=?",
-                    (candidate, project["id"],),
+                    (candidate, project["id"]),
                 )
 
         # Canonical text defaults to the current annotation target. Do not overwrite rows
