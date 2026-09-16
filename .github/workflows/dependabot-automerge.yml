@@ -25,7 +25,7 @@ jobs:
     steps:
       - name: Find pull request for completed workflow
         id: pr
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const prs = context.payload.workflow_run.pull_requests;
@@ -39,7 +39,7 @@ jobs:
       - name: Check Dependabot update type and all workflow results
         if: steps.pr.outputs.number != ''
         id: eligibility
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const prNumber = Number('${{ steps.pr.outputs.number }}');
@@ -120,7 +120,7 @@ jobs:
 
       - name: Squash merge eligible patch update
         if: steps.eligibility.outputs.merge == 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const prNumber = Number('${{ steps.pr.outputs.number }}');
