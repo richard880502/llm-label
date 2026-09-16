@@ -284,7 +284,7 @@ export default function LLMSettingsModal({ projectId: pid, open, onClose, onTask
     }
   }
 
-  const startApiTask = async (runKind: 'trial' | 'full' = 'full') => {
+  const startApiTask = async (runKind: 'trial' | 'full' = 'full', reuseSample = true) => {
     const requestedSlots = compareModels ? compareSlots : [primarySlot]
     const runnable = requestedSlots.filter(slot =>
       configuredSlots.some(item => item.slot === slot)
@@ -305,6 +305,7 @@ export default function LLMSettingsModal({ projectId: pid, open, onClose, onTask
           executor_name: config ? modelName(config) : `模型 ${slot}`,
           run_kind: runKind,
           ...(runKind === 'trial' ? { sample_size: 20 } : {}),
+          ...(runKind === 'trial' && reuseSample && trialTask?.status === 'done' ? { sample_from_task_id: trialTask.id } : {}),
           ...(runKind === 'full' && trialTask?.status === 'done' ? { continued_from_task_id: trialTask.id } : {}),
         })
         if (runKind === 'trial') {
@@ -320,7 +321,7 @@ export default function LLMSettingsModal({ projectId: pid, open, onClose, onTask
     }
   }
 
-  const startMcpTask = async (runKind: 'trial' | 'full' = 'full') => {
+  const startMcpTask = async (runKind: 'trial' | 'full' = 'full', reuseSample = true) => {
     if (activeTasks.some(task => task.slot === mcpSlot)) return
     setStarting(true)
     setTaskError(null)
@@ -334,6 +335,7 @@ export default function LLMSettingsModal({ projectId: pid, open, onClose, onTask
         executor_name: mcpAgent,
         run_kind: runKind,
         ...(runKind === 'trial' ? { sample_size: 20 } : {}),
+        ...(runKind === 'trial' && reuseSample && trialTask?.status === 'done' ? { sample_from_task_id: trialTask.id } : {}),
         ...(runKind === 'full' && trialTask?.status === 'done' ? { continued_from_task_id: trialTask.id } : {}),
       })
       if (runKind === 'trial') setTrialTask(task)
@@ -683,7 +685,10 @@ export default function LLMSettingsModal({ projectId: pid, open, onClose, onTask
           <DialogFooter className="shrink-0 border-t px-6 py-3 sm:justify-between">
             {trialResults.length > 0 ? (
               <>
-                <Button variant="outline" onClick={() => { setTrialResults([]); setCodebookOpen(true) }}>調整準則再試一次</Button>
+                <div className="flex gap-2">
+                  <Button variant="ghost" onClick={() => executionMode === 'api' ? startApiTask('trial', false) : startMcpTask('trial', false)} disabled={starting}>換一批</Button>
+                  <Button variant="outline" onClick={() => { setTrialResults([]); setCodebookOpen(true) }}>調整準則再試一次</Button>
+                </div>
                 <Button onClick={() => executionMode === 'api' ? startApiTask('full') : startMcpTask('full')} disabled={starting}>
                   {starting ? '啟動中…' : `繼續分類剩餘 ${Math.max(0, (taskTarget === 'pending' ? project?.pending || 0 : project?.total_rows || 0) - trialResults.length)} 筆`}
                 </Button>
@@ -707,7 +712,6 @@ export default function LLMSettingsModal({ projectId: pid, open, onClose, onTask
         onChange={value => {
           setAnnotationInstructions(value)
           setInstructionsMessage(null)
-          setTrialTask(null)
           setTrialResults([])
         }}
         correctedExamples={project?.corrected || 0}

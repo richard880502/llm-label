@@ -30,6 +30,7 @@ class CreateTaskRequest(BaseModel):
     executor_name: str = ""
     run_kind: Literal["trial", "full"] = "full"
     sample_size: int | None = Field(default=None, ge=1, le=50)
+    sample_from_task_id: int | None = None
     continued_from_task_id: int | None = None
 
 
@@ -52,7 +53,7 @@ class SubmitBatchRequest(BaseModel):
     results: list[LabelingResult]
 
 
-def _eligible_rows(conn, project_id: int, target: str, slot: int, sample_size: int | None = None, exclude_task_id: int | None = None):
+def _eligible_rows(conn, project_id: int, target: str, slot: int, sample_size: int | None = None, exclude_task_id: int | None = None, random_sample: bool = False):
     """Return the frozen row scope for a newly created labeling task."""
     if target == "parse_failed":
         exclusion = " AND NOT EXISTS (SELECT 1 FROM task_items excluded WHERE excluded.task_id=? AND excluded.row_id=r.id AND excluded.status='done')" if exclude_task_id else ""
@@ -62,7 +63,7 @@ def _eligible_rows(conn, project_id: int, target: str, slot: int, sample_size: i
                FROM rows r
                JOIN row_llm_results rlr ON rlr.row_id=r.id AND rlr.slot=?
                WHERE r.project_id=? AND rlr.reason LIKE '⚠️%'{exclusion}
-               ORDER BY r.source_row_number, r.id""",
+               ORDER BY {"random()" if random_sample else "r.source_row_number, r.id"}""",
             params,
         ).fetchall()
         return rows[:sample_size] if sample_size else rows
@@ -75,7 +76,7 @@ def _eligible_rows(conn, project_id: int, target: str, slot: int, sample_size: i
     exclusion = " AND NOT EXISTS (SELECT 1 FROM task_items excluded WHERE excluded.task_id=? AND excluded.row_id=r.id AND excluded.status='done')" if exclude_task_id else ""
     params = (project_id, exclude_task_id) if exclude_task_id else (project_id,)
     rows = conn.execute(
-        f"SELECT r.id FROM rows r WHERE r.project_id=? AND {status_filter}{exclusion} ORDER BY r.source_row_number, r.id",
+        f"SELECT r.id FROM rows r WHERE r.project_id=? AND {status_filter}{exclusion} ORDER BY {"random()" if random_sample else "r.source_row_number, r.id"}",
         params,
     ).fetchall()
     return rows[:sample_size] if sample_size else rows
@@ -234,6 +235,16 @@ def create_task(
             if not source_task:
                 raise HTTPException(400, "找不到可接續的已完成試跑任務")
 
+        sample_source = None
+        if body.sample_from_task_id is not None:
+            sample_source = conn.execute(
+                """SELECT id FROM tasks
+                   WHERE id=? AND project_id=? AND slot=? AND run_kind='trial' AND status='done'""",
+                (body.sample_from_task_id, project_id, body.slot),
+            ).fetchone()
+            if not sample_source:
+                raise HTTPException(400, "找不到可重用樣本的已完成試跑任務")
+
         prompt_state = _prompt_state(conn, project_id, body.slot)
         if body.continued_from_task_id is not None and source_task["prompt_fingerprint"] != prompt_state["fingerprint"]:
             raise HTTPException(409, "分類準則或 Prompt 已變更，請重新試跑後再繼續")
@@ -264,11 +275,19 @@ def create_task(
         )
         task_id = cur.lastrowid
 
-        eligible = _eligible_rows(
-            conn, project_id, body.target, body.slot,
-            body.sample_size if body.run_kind == "trial" else None,
-            body.continued_from_task_id,
-        )
+        if sample_source:
+            eligible = conn.execute(
+                """SELECT row_id AS id FROM task_items
+                   WHERE task_id=? ORDER BY id""",
+                (body.sample_from_task_id,),
+            ).fetchall()
+        else:
+            eligible = _eligible_rows(
+                conn, project_id, body.target, body.slot,
+                body.sample_size if body.run_kind == "trial" else None,
+                body.continued_from_task_id,
+                random_sample=body.run_kind == "trial",
+            )
         if eligible:
             conn.executemany(
                 "INSERT INTO task_items (task_id, row_id) VALUES (?, ?)",

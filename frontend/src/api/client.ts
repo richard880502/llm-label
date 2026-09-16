@@ -330,7 +330,7 @@ export const api = {
     request<Task[]>(`/projects/${projectId}/tasks`),
   createTask: (projectId: number, body: {
     target: 'pending' | 'all' | 'parse_failed'; slot: number; execution_mode: 'api' | 'mcp'; executor_name?: string
-    run_kind?: 'trial' | 'full'; sample_size?: number; continued_from_task_id?: number
+    run_kind?: 'trial' | 'full'; sample_size?: number; sample_from_task_id?: number; continued_from_task_id?: number
   }) =>
     request<Task>(`/projects/${projectId}/tasks`, {
       method: 'POST',
