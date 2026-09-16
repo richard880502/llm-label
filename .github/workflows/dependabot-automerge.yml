@@ -1,0 +1,155 @@
+name: Dependabot auto-merge
+
+on:
+  workflow_run:
+    workflows:
+      - CI
+      - Docker
+      - CodeQL
+      - Dependency Review
+    types:
+      - completed
+
+permissions:
+  contents: write
+  pull-requests: write
+  checks: read
+
+jobs:
+  automerge:
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Find pull request for completed workflow
+        id: pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prs = context.payload.workflow_run.pull_requests;
+            if (!prs || prs.length === 0) {
+              core.notice('No pull request associated with this workflow run.');
+              core.setOutput('number', '');
+              return;
+            }
+            core.setOutput('number', String(prs[0].number));
+
+      - name: Check Dependabot update type and CI status
+        if: steps.pr.outputs.number != ''
+        id: eligibility
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = Number('${{ steps.pr.outputs.number }}');
+            const { owner, repo } = context.repo;
+
+            const { data: pr } = await github.rest.pulls.get({
+              owner,
+              repo,
+              pull_number: prNumber,
+            });
+
+            if (pr.user?.login !== 'dependabot[bot]') {
+              core.notice(`PR #${prNumber} is not from dependabot[bot].`);
+              core.setOutput('merge', 'false');
+              return;
+            }
+
+            if (pr.base.ref !== 'main' || pr.draft) {
+              core.notice(`PR #${prNumber} does not target main or is a draft.`);
+              core.setOutput('merge', 'false');
+              return;
+            }
+
+            const commitMessage = `${pr.title}\n${pr.body || ''}`;
+            const semverMatch = commitMessage.match(/from\s+v?(\d+)\.(\d+)\.(\d+)\s+to\s+v?(\d+)\.(\d+)\.(\d+)/i);
+            if (!semverMatch) {
+              core.notice('Could not prove this is a semantic-version patch update; leaving it for manual review.');
+              core.setOutput('merge', 'false');
+              return;
+            }
+
+            const [, oldMajor, oldMinor, oldPatch, newMajor, newMinor, newPatch] = semverMatch.map(Number);
+            const isPatch = oldMajor === newMajor && oldMinor === newMinor && newPatch > oldPatch;
+            if (!isPatch) {
+              core.notice('Dependabot update is not patch-only; leaving it for manual review.');
+              core.setOutput('merge', 'false');
+              return;
+            }
+
+            const { data: checks } = await github.rest.checks.listForRef({
+              owner,
+              repo,
+              ref: pr.head.sha,
+              per_page: 100,
+            });
+
+            const relevant = checks.check_runs.filter(run =>
+              !['Dependabot auto-merge'].includes(run.name)
+            );
+
+            const pending = relevant.filter(run => run.status !== 'completed');
+            const failed = relevant.filter(run =>
+              run.status === 'completed' &&
+              !['success', 'neutral', 'skipped'].includes(run.conclusion)
+            );
+
+            if (pending.length > 0) {
+              core.notice(`Waiting for ${pending.length} check(s) to complete.`);
+              core.setOutput('merge', 'false');
+              return;
+            }
+
+            if (failed.length > 0) {
+              core.warning(`Not merging because ${failed.length} check(s) failed.`);
+              core.setOutput('merge', 'false');
+              return;
+            }
+
+            const expectedWorkflowNames = ['CI', 'Docker', 'CodeQL', 'Dependency Review'];
+            const completedNames = new Set(
+              relevant
+                .filter(run => run.status === 'completed' && ['success', 'neutral', 'skipped'].includes(run.conclusion))
+                .map(run => run.name)
+            );
+
+            core.setOutput('merge', 'true');
+            core.setOutput('head_sha', pr.head.sha);
+
+      - name: Squash merge eligible patch update
+        if: steps.eligibility.outputs.merge == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = Number('${{ steps.pr.outputs.number }}');
+            const expectedHeadSha = '${{ steps.eligibility.outputs.head_sha }}';
+            const { owner, repo } = context.repo;
+
+            const { data: pr } = await github.rest.pulls.get({
+              owner,
+              repo,
+              pull_number: prNumber,
+            });
+
+            if (pr.head.sha !== expectedHeadSha) {
+              core.setFailed('PR head changed after checks were evaluated; refusing to merge stale revision.');
+              return;
+            }
+
+            const result = await github.rest.pulls.merge({
+              owner,
+              repo,
+              pull_number: prNumber,
+              merge_method: 'squash',
+              sha: expectedHeadSha,
+              commit_title: pr.title,
+            });
+
+            if (!result.data.merged) {
+              core.setFailed(result.data.message || 'GitHub did not merge the pull request.');
+              return;
+            }
+
+            core.notice(`Merged Dependabot patch PR #${prNumber}.`);
