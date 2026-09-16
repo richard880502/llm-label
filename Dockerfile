@@ -6,7 +6,7 @@ RUN npm install
 COPY frontend/ .
 RUN npm run build
 
-FROM python:3.12-slim
+FROM python:3.14-slim
 ENV TZ=Asia/Taipei
 ENV PYTHONPATH=/app
 ENV ANNOTATION_API_URL=http://127.0.0.1:8001
