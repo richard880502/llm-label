@@ -1,0 +1,35 @@
+name: Docker
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+      - ci/**
+  workflow_dispatch:
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  docker:
+    name: Validate containers
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Validate docker compose
+        run: docker compose config
+
+      - name: Build application image
+        run: docker build -t llm-label-ci .
+
+      - name: Build MCP image
+        run: docker build -t llm-label-mcp-ci ./mcp_server
