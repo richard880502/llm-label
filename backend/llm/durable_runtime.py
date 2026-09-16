@@ -312,6 +312,15 @@ async def _run_task(task_id: int, project_id: int, target: str, slot: int) -> No
                             labels_json, subtypes_json, projection["reason"], canonical_json,
                         ),
                     )
+                    conn.execute(
+                        """INSERT INTO task_result_snapshots
+                           (task_id, row_id, relevance, labels, reason, result)
+                           VALUES (?, ?, ?, ?, ?, ?::jsonb)
+                           ON CONFLICT (task_id, row_id) DO UPDATE SET
+                               relevance=EXCLUDED.relevance, labels=EXCLUDED.labels,
+                               reason=EXCLUDED.reason, result=EXCLUDED.result""",
+                        (task_id, row["id"], projection["relevance"], labels_json, projection["reason"], canonical_json),
+                    )
                     if slot == 1:
                         conn.execute(
                             """UPDATE rows SET prediction=?::jsonb,

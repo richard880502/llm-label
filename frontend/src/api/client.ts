@@ -121,6 +121,19 @@ export interface Task {
   created_by: string
   claimed_by: string
   last_activity_at: string | null
+  run_kind: 'trial' | 'full'
+  sample_size: number | null
+  continued_from_task_id: number | null
+}
+
+export interface TaskResult {
+  row_id: number
+  source_row_number: number
+  text: string
+  relevance: string | null
+  labels: string | string[] | null
+  reason: string | null
+  result: Record<string, unknown> | null
 }
 
 export interface ApiToken {
@@ -317,6 +330,7 @@ export const api = {
     request<Task[]>(`/projects/${projectId}/tasks`),
   createTask: (projectId: number, body: {
     target: 'pending' | 'all' | 'parse_failed'; slot: number; execution_mode: 'api' | 'mcp'; executor_name?: string
+    run_kind?: 'trial' | 'full'; sample_size?: number; continued_from_task_id?: number
   }) =>
     request<Task>(`/projects/${projectId}/tasks`, {
       method: 'POST',
@@ -325,6 +339,8 @@ export const api = {
     }),
   getTask: (projectId: number, taskId: number) =>
     request<Task>(`/projects/${projectId}/tasks/${taskId}`),
+  getTaskResults: (projectId: number, taskId: number) =>
+    request<TaskResult[]>(`/projects/${projectId}/tasks/${taskId}/results`),
   cancelTask: (projectId: number, taskId: number) =>
     request<Task>(`/projects/${projectId}/tasks/${taskId}/cancel`, { method: 'POST' }),
   deleteTask: (projectId: number, taskId: number) =>

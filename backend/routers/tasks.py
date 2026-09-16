@@ -28,6 +28,9 @@ class CreateTaskRequest(BaseModel):
     slot: int = Field(default=1, ge=1, le=3)
     execution_mode: Literal["api", "mcp"] = "api"
     executor_name: str = ""
+    run_kind: Literal["trial", "full"] = "full"
+    sample_size: int | None = Field(default=None, ge=1, le=50)
+    continued_from_task_id: int | None = None
 
 
 class LabelingResult(BaseModel):
@@ -49,27 +52,33 @@ class SubmitBatchRequest(BaseModel):
     results: list[LabelingResult]
 
 
-def _eligible_rows(conn, project_id: int, target: str, slot: int):
+def _eligible_rows(conn, project_id: int, target: str, slot: int, sample_size: int | None = None, exclude_task_id: int | None = None):
     """Return the frozen row scope for a newly created labeling task."""
     if target == "parse_failed":
-        return conn.execute(
-            """SELECT r.id
+        exclusion = " AND NOT EXISTS (SELECT 1 FROM task_items excluded WHERE excluded.task_id=? AND excluded.row_id=r.id AND excluded.status='done')" if exclude_task_id else ""
+        params = (slot, project_id, exclude_task_id) if exclude_task_id else (slot, project_id)
+        rows = conn.execute(
+            f"""SELECT r.id
                FROM rows r
                JOIN row_llm_results rlr ON rlr.row_id=r.id AND rlr.slot=?
-               WHERE r.project_id=? AND rlr.reason LIKE '⚠️%'
+               WHERE r.project_id=? AND rlr.reason LIKE '⚠️%'{exclusion}
                ORDER BY r.source_row_number, r.id""",
-            (slot, project_id),
+            params,
         ).fetchall()
+        return rows[:sample_size] if sample_size else rows
 
     status_filter = (
         "r.status = 'pending'"
         if target == "pending"
         else "r.status IN ('pending', 'corrected')"
     )
-    return conn.execute(
-        f"SELECT r.id FROM rows r WHERE r.project_id=? AND {status_filter} ORDER BY r.source_row_number, r.id",
-        (project_id,),
+    exclusion = " AND NOT EXISTS (SELECT 1 FROM task_items excluded WHERE excluded.task_id=? AND excluded.row_id=r.id AND excluded.status='done')" if exclude_task_id else ""
+    params = (project_id, exclude_task_id) if exclude_task_id else (project_id,)
+    rows = conn.execute(
+        f"SELECT r.id FROM rows r WHERE r.project_id=? AND {status_filter}{exclusion} ORDER BY r.source_row_number, r.id",
+        params,
     ).fetchall()
+    return rows[:sample_size] if sample_size else rows
 
 
 def _get_task(conn, project_id: int, task_id: int):
@@ -216,7 +225,18 @@ def create_task(
         if running:
             raise HTTPException(400, f"結果槽 {body.slot} 已有任務執行中")
 
+        if body.continued_from_task_id is not None:
+            source_task = conn.execute(
+                """SELECT id, prompt_fingerprint FROM tasks
+                   WHERE id=? AND project_id=? AND slot=? AND run_kind='trial' AND status='done'""",
+                (body.continued_from_task_id, project_id, body.slot),
+            ).fetchone()
+            if not source_task:
+                raise HTTPException(400, "找不到可接續的已完成試跑任務")
+
         prompt_state = _prompt_state(conn, project_id, body.slot)
+        if body.continued_from_task_id is not None and source_task["prompt_fingerprint"] != prompt_state["fingerprint"]:
+            raise HTTPException(409, "分類準則或 Prompt 已變更，請重新試跑後再繼續")
         initial_status = "pending" if body.execution_mode == "api" else "waiting_for_agent"
         executor_name = body.executor_name.strip() or (
             "platform-api" if body.execution_mode == "api" else "codex"
@@ -225,9 +245,9 @@ def create_task(
             """INSERT INTO tasks
                (project_id, slot, status, total, processed, failed, created_at,
                 execution_mode, executor_name, target, created_by, last_activity_at,
-                prompt_fingerprint)
+                prompt_fingerprint, run_kind, sample_size, continued_from_task_id)
                VALUES (?, ?, ?, 0, 0, 0, datetime('now', 'localtime'), ?, ?, ?, ?,
-                       datetime('now', 'localtime'), ?)""",
+                       datetime('now', 'localtime'), ?, ?, ?, ?)""",
             (
                 project_id,
                 body.slot,
@@ -237,25 +257,29 @@ def create_task(
                 body.target,
                 user.username,
                 prompt_state["fingerprint"],
+                body.run_kind,
+                body.sample_size,
+                body.continued_from_task_id,
             ),
         )
         task_id = cur.lastrowid
 
-        # MCP tasks always freeze their row scope at creation. Failure-retry API
-        # tasks do the same so the durable runner resumes the exact error set.
-        if body.execution_mode == "mcp" or body.target == "parse_failed":
-            eligible = _eligible_rows(conn, project_id, body.target, body.slot)
-            if eligible:
-                conn.executemany(
-                    "INSERT INTO task_items (task_id, row_id) VALUES (?, ?)",
-                    [(task_id, row["id"]) for row in eligible],
-                )
-            conn.execute("UPDATE tasks SET total=? WHERE id=?", (len(eligible), task_id))
-            if not eligible:
-                conn.execute(
-                    "UPDATE tasks SET status='done', finished_at=datetime('now', 'localtime') WHERE id=?",
-                    (task_id,),
-                )
+        eligible = _eligible_rows(
+            conn, project_id, body.target, body.slot,
+            body.sample_size if body.run_kind == "trial" else None,
+            body.continued_from_task_id,
+        )
+        if eligible:
+            conn.executemany(
+                "INSERT INTO task_items (task_id, row_id) VALUES (?, ?)",
+                [(task_id, row["id"]) for row in eligible],
+            )
+        conn.execute("UPDATE tasks SET total=? WHERE id=?", (len(eligible), task_id))
+        if not eligible:
+            conn.execute(
+                "UPDATE tasks SET status='done', finished_at=datetime('now', 'localtime') WHERE id=?",
+                (task_id,),
+            )
 
         conn.commit()
         task = _task_payload(conn, task_id)
@@ -518,6 +542,15 @@ def submit_labeling_batch(
                    updated_at=EXCLUDED.updated_at""",
             llm_result_params,
         )
+        conn.executemany(
+            """INSERT INTO task_result_snapshots
+               (task_id, row_id, relevance, labels, reason, result)
+               VALUES (?, ?, ?, ?, ?, ?::jsonb)
+               ON CONFLICT (task_id, row_id) DO UPDATE SET
+                   relevance=EXCLUDED.relevance, labels=EXCLUDED.labels,
+                   reason=EXCLUDED.reason, result=EXCLUDED.result""",
+            [(task_id, item[0], item[3], item[4], item[6], item[7]) for item in llm_result_params],
+        )
         if slot == 1:
             conn.executemany(
                 """UPDATE rows SET prediction=?::jsonb,
@@ -609,6 +642,24 @@ def get_task(project_id: int, task_id: int, _: CurrentUser = Depends(get_current
         task = _get_task(conn, project_id, task_id)
         result = dict(task)
     return result
+
+
+@router.get("/{project_id}/tasks/{task_id}/results")
+def get_task_results(project_id: int, task_id: int, _: CurrentUser = Depends(get_current_user)):
+    with get_db() as conn:
+        _get_task(conn, project_id, task_id)
+        rows = conn.execute(
+            """SELECT r.id AS row_id, r.source_row_number,
+                      COALESCE(NULLIF(r.text, ''), NULLIF(r.comment_content, ''), r.content, '') AS text,
+                      s.relevance, s.labels, s.reason, s.result
+                 FROM task_items ti
+                 JOIN rows r ON r.id=ti.row_id
+                 LEFT JOIN task_result_snapshots s ON s.task_id=ti.task_id AND s.row_id=ti.row_id
+                WHERE ti.task_id=?
+                ORDER BY r.source_row_number, r.id""",
+            (task_id,),
+        ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def _run_sync(task_id: int, project_id: int, target: str, slot: int) -> None:
