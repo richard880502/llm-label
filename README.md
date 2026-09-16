@@ -1,10 +1,32 @@
 # Annotation App
 
-**目前版本：v5.0.3**
+**目前版本：v5.1.0**
 
 多人協作的通用資料標注、AI 自動分類與人工複查平台。前端使用 React/Vite，後端使用 FastAPI，正式資料儲存在 PostgreSQL。
 
 v5 系列不再綁定固定的分類欄位或特定標籤集合，而是改成以 **Input Mapping + Annotation Schema + Codebook + Shared Prompt** 描述每個專案的資料與分類規則。
+
+## v5.1.0 更新重點
+
+### AI 分類試跑流程
+
+自動分類改為「先試跑、檢查結果、再繼續」的漸進式流程，降低第一次執行大量資料前的風險與設定負擔。
+
+- 主畫面精簡分類準則、執行方式、模型與資料範圍；低頻選項繼續放在進階設定。
+- 第一次試跑會從選定範圍隨機抽取最多 20 筆。
+- 調整 Codebook 後再次試跑會沿用同一批樣本，方便比較規則修改前後的結果。
+- 結果頁提供「換一批」，需要時可重新隨機抽取 20 筆。
+- 試跑完成後可逐筆查看原文、相關性、標籤與模型判斷理由。
+- 「繼續分類剩餘資料」會排除該輪已成功完成的試跑樣本，避免重複呼叫模型。
+- Platform API 與 MCP Agent 共用試跑流程。
+
+### 分類輪次與結果快照
+
+- `tasks` 新增 `run_kind`、`sample_size` 與 `continued_from_task_id`，區分試跑及完整分類。
+- 新增 `task_result_snapshots`，每張任務保存當輪結果；後續分類不會覆蓋歷史試跑結果。
+- 任務紀錄會標示「試跑／完整分類」，完成的試跑可以重新開啟查看。
+- 接續完整分類前會驗證來源試跑、結果 slot 與 Prompt fingerprint，規則已改變時要求重新試跑。
+- 所有新任務在建立時固定 `task_items` 範圍，保留既有 durable execution 與 restart recovery 行為。
 
 ## v5.0.3 更新重點
 
@@ -422,6 +444,7 @@ docker compose exec -T db \
 
 ## 版本歷程
 
+- `v5.1.0`：新增隨機 20 筆試跑、固定樣本重試、換一批、結果檢查與接續剩餘資料；新增 task-level 結果快照並簡化自動分類介面。
 - `v5.0.3`：新增「只重跑解析失敗」資料範圍，依結果 slot 精準重跑 JSON / Schema 解析錯誤；API / MCP 共用相同 target，並以 `task_items` snapshot 接續 v5.0.2 durable recovery 行為。
 - `v5.0.2`：API 分類任務改為 PostgreSQL durable checkpoints，支援瀏覽器關閉後持續執行、App/container restart 自動恢復、watchdog/lease recovery；LLM HTTP path 改為真正可達 100 並發的專用 executor、共享 connection pool、全域 in-flight guard 與 transient error retry/backoff。
 - `v5.0.1`：Shared Prompt / Codebook 規則穩定化、API / MCP 共用 prompt policy、task-level prompt fingerprint，以及分類 Concurrency 上限提高至 100。

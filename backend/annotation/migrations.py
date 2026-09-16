@@ -39,6 +39,22 @@ def ensure_annotation_schema_columns() -> None:
         conn.execute(
             "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS prompt_fingerprint TEXT NOT NULL DEFAULT ''"
         )
+        conn.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS run_kind TEXT NOT NULL DEFAULT 'full'")
+        conn.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS sample_size INTEGER")
+        conn.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS continued_from_task_id INTEGER")
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS task_result_snapshots (
+                   task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+                   row_id INTEGER NOT NULL REFERENCES rows(id) ON DELETE CASCADE,
+                   relevance TEXT,
+                   labels TEXT DEFAULT '[]',
+                   reason TEXT DEFAULT '',
+                   result JSONB,
+                   created_at TEXT DEFAULT to_char(CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Taipei', 'YYYY-MM-DD HH24:MI:SS'),
+                   PRIMARY KEY(task_id, row_id)
+               )"""
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_task_result_snapshots_task ON task_result_snapshots(task_id)")
 
         # Existing projects become explicit legacy-schema projects. Runtime fallbacks in
         # project_service remain as a second safety net for partially migrated databases.

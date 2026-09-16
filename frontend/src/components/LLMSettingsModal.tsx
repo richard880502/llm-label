@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { api, LLMSlotConfig, McpOAuthConnection, Project, Task } from '../api/client'
+import { api, LLMSlotConfig, McpOAuthConnection, Project, Task, TaskResult } from '../api/client'
 import LLMSettingsAdvancedModal from './LLMSettingsAdvancedModal'
 import CodebookEditorDialog from './CodebookEditorDialog'
 import { Button } from '@/components/ui/button'
@@ -45,16 +45,29 @@ function progress(task: Task): number {
   return Math.max(0, Math.min(100, Math.round((task.processed / task.total) * 100)))
 }
 
+function resultLabels(result: TaskResult): string[] {
+  if (Array.isArray(result.labels)) return result.labels
+  if (!result.labels) return []
+  try {
+    const parsed = JSON.parse(result.labels)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
 function TaskDock({
   tasks,
   slots,
   onStop,
   onDelete,
+  onViewTrial,
 }: {
   tasks: Task[]
   slots: LLMSlotConfig[]
   onStop: (taskId: number) => Promise<void>
   onDelete: (taskId: number) => Promise<void>
+  onViewTrial: (task: Task) => Promise<void>
 }) {
   const [expanded, setExpanded] = useState(false)
   const active = tasks.filter(task => ACTIVE_STATUSES.has(task.status))
@@ -86,7 +99,7 @@ function TaskDock({
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <p className="truncate text-sm font-medium">{taskSource(task, slots)}</p>
-                      <p className="mt-0.5 text-xs text-muted-foreground">#{task.id} · {STATUS_LABEL[task.status]}</p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">#{task.id} · {task.run_kind === 'trial' ? '試跑' : '完整分類'} · {STATUS_LABEL[task.status]}</p>
                     </div>
                     <Badge variant={task.status === 'failed' ? 'destructive' : 'outline'} className="shrink-0 text-[11px]">
                       {task.processed}/{task.total}
@@ -108,7 +121,9 @@ function TaskDock({
                   {task.error && !isActive && <p className="line-clamp-2 text-xs text-destructive">{task.error}</p>}
 
                   <div className="flex justify-end">
-                    {isActive ? (
+                    {task.run_kind === 'trial' && task.status === 'done' ? (
+                      <Button variant="outline" size="xs" onClick={() => onViewTrial(task)}>查看結果</Button>
+                    ) : isActive ? (
                       <Button variant="destructive" size="xs" onClick={() => onStop(task.id)}>停止</Button>
                     ) : (
                       <Button variant="ghost" size="xs" className="text-destructive hover:text-destructive" onClick={() => onDelete(task.id)}>刪除</Button>
@@ -164,6 +179,9 @@ export default function LLMSettingsModal({ projectId: pid, open, onClose, onTask
   const [taskError, setTaskError] = useState<string | null>(null)
   const [createdMcpTask, setCreatedMcpTask] = useState<Task | null>(null)
   const [copied, setCopied] = useState(false)
+  const [trialTask, setTrialTask] = useState<Task | null>(null)
+  const [trialResults, setTrialResults] = useState<TaskResult[]>([])
+  const [scopeOpen, setScopeOpen] = useState(false)
 
   const configuredSlots = useMemo(
     () => slots.filter(item => Boolean(item.api_url && item.model)),
@@ -177,7 +195,15 @@ export default function LLMSettingsModal({ projectId: pid, open, onClose, onTask
 
   const refreshTasks = async (notify = false) => {
     try {
-      setTasks(await api.listTasks(pid))
+      const latest = await api.listTasks(pid)
+      setTasks(latest)
+      if (trialTask) {
+        const refreshed = latest.find(task => task.id === trialTask.id)
+        if (refreshed) {
+          setTrialTask(refreshed)
+          if (refreshed.status === 'done') setTrialResults(await api.getTaskResults(pid, refreshed.id))
+        }
+      }
       if (notify) onTasksChanged?.()
     } catch {
       // Keep the current task list if polling temporarily fails.
@@ -234,6 +260,12 @@ export default function LLMSettingsModal({ projectId: pid, open, onClose, onTask
     return () => window.clearInterval(timer)
   }, [open, advancedOpen, activeTasks.length, pid])
 
+  useEffect(() => {
+    if (!advancedOpen) return
+    setTrialTask(null)
+    setTrialResults([])
+  }, [advancedOpen])
+
   const saveInstructions = async () => {
     if (!codebookDirty) return
     setSavingInstructions(true)
@@ -252,7 +284,7 @@ export default function LLMSettingsModal({ projectId: pid, open, onClose, onTask
     }
   }
 
-  const startApiTask = async () => {
+  const startApiTask = async (runKind: 'trial' | 'full' = 'full', reuseSample = true) => {
     const requestedSlots = compareModels ? compareSlots : [primarySlot]
     const runnable = requestedSlots.filter(slot =>
       configuredSlots.some(item => item.slot === slot)
@@ -266,12 +298,20 @@ export default function LLMSettingsModal({ projectId: pid, open, onClose, onTask
       if (codebookDirty) await saveInstructions()
       for (const slot of runnable) {
         const config = configuredSlots.find(item => item.slot === slot)
-        await api.createTask(pid, {
+        const task = await api.createTask(pid, {
           target: taskTarget,
           slot,
           execution_mode: 'api',
           executor_name: config ? modelName(config) : `模型 ${slot}`,
+          run_kind: runKind,
+          ...(runKind === 'trial' ? { sample_size: 20 } : {}),
+          ...(runKind === 'trial' && reuseSample && trialTask?.status === 'done' ? { sample_from_task_id: trialTask.id } : {}),
+          ...(runKind === 'full' && trialTask?.status === 'done' ? { continued_from_task_id: trialTask.id } : {}),
         })
+        if (runKind === 'trial') {
+          setTrialTask(task)
+          setTrialResults([])
+        }
       }
       await refreshTasks(true)
     } catch (error) {
@@ -281,7 +321,7 @@ export default function LLMSettingsModal({ projectId: pid, open, onClose, onTask
     }
   }
 
-  const startMcpTask = async () => {
+  const startMcpTask = async (runKind: 'trial' | 'full' = 'full', reuseSample = true) => {
     if (activeTasks.some(task => task.slot === mcpSlot)) return
     setStarting(true)
     setTaskError(null)
@@ -293,7 +333,12 @@ export default function LLMSettingsModal({ projectId: pid, open, onClose, onTask
         slot: mcpSlot,
         execution_mode: 'mcp',
         executor_name: mcpAgent,
+        run_kind: runKind,
+        ...(runKind === 'trial' ? { sample_size: 20 } : {}),
+        ...(runKind === 'trial' && reuseSample && trialTask?.status === 'done' ? { sample_from_task_id: trialTask.id } : {}),
+        ...(runKind === 'full' && trialTask?.status === 'done' ? { continued_from_task_id: trialTask.id } : {}),
       })
+      if (runKind === 'trial') setTrialTask(task)
       setCreatedMcpTask(task)
       await refreshTasks(true)
     } catch (error) {
@@ -321,6 +366,11 @@ export default function LLMSettingsModal({ projectId: pid, open, onClose, onTask
     } catch (error) {
       setTaskError(error instanceof Error ? error.message : String(error))
     }
+  }
+
+  const viewTrial = async (task: Task) => {
+    setTrialTask(task)
+    setTrialResults(await api.getTaskResults(pid, task.id))
   }
 
   const copyRunInstruction = async () => {
@@ -359,13 +409,15 @@ export default function LLMSettingsModal({ projectId: pid, open, onClose, onTask
   return (
     <>
       <Dialog open={open} onOpenChange={value => { if (!value) onClose() }}>
-        <DialogContent className="sm:max-w-3xl h-[90vh] flex flex-col gap-0 p-0 overflow-hidden">
+        <DialogContent className="sm:max-w-2xl max-h-[88vh] flex flex-col gap-0 p-0 overflow-hidden">
           <DialogHeader className="shrink-0 border-b px-6 py-4">
             <div className="flex items-start justify-between gap-4 pr-8">
               <div>
-                <DialogTitle>自動分類</DialogTitle>
+                <DialogTitle>{trialResults.length > 0 ? '檢查試跑結果' : 'AI 分類'}</DialogTitle>
                 <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                  先確認分類規則，再選擇平台模型或 MCP Agent 執行。Codebook 有修改時，開始任務前會自動儲存。
+                  {trialResults.length > 0
+                    ? `已完成 ${trialResults.length} 筆試跑。確認結果後，可以調整規則再試一次或繼續分類剩餘資料。`
+                    : '先用 20 筆資料確認分類結果，再決定是否繼續執行。'}
                 </p>
               </div>
               <Button variant="outline" size="sm" onClick={() => setAdvancedOpen(true)}>
@@ -375,36 +427,49 @@ export default function LLMSettingsModal({ projectId: pid, open, onClose, onTask
           </DialogHeader>
 
           <div className="min-h-0 flex-1 space-y-6 overflow-y-auto px-6 py-5">
+            {trialResults.length > 0 && (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between rounded-xl bg-muted/40 px-4 py-3 text-sm">
+                  <span>試跑 #{trialTask?.id} · {taskSource(trialTask!, slots)}</span>
+                  <Badge variant="secondary">{trialResults.length} 筆</Badge>
+                </div>
+                {trialResults.map(item => {
+                  const labels = resultLabels(item)
+                  return (
+                    <details key={item.row_id} className="group rounded-xl border border-border bg-card p-4">
+                      <summary className="cursor-pointer list-none">
+                        <p className="line-clamp-2 text-sm leading-6">{item.text || '（無主要文字）'}</p>
+                        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                          {item.relevance && <Badge variant="outline">{item.relevance}</Badge>}
+                          {labels.length > 0 ? labels.map(label => <Badge key={label} variant="secondary">{label}</Badge>) : <span className="text-xs text-muted-foreground">無標籤</span>}
+                          <span className="ml-auto text-xs text-muted-foreground group-open:hidden">查看理由</span>
+                        </div>
+                      </summary>
+                      <p className="mt-3 border-t border-border pt-3 text-xs leading-5 text-muted-foreground">{item.reason || '沒有提供判斷理由'}</p>
+                    </details>
+                  )
+                })}
+              </div>
+            )}
+
+            <div className={trialResults.length > 0 ? 'hidden' : 'space-y-5'}>
             <button
               type="button"
               onClick={() => setCodebookOpen(true)}
-              className="group w-full rounded-2xl border border-teal-200 bg-teal-50/40 p-4 text-left transition hover:border-teal-400 hover:bg-teal-50/70 dark:border-teal-900 dark:bg-teal-950/10 dark:hover:border-teal-700 dark:hover:bg-teal-950/20"
+              className="group w-full rounded-xl border border-border bg-card p-4 text-left transition hover:bg-muted/30"
             >
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <div className="flex items-center gap-2">
-                    <p className="text-sm font-semibold">1. 分類規則 / Codebook</p>
+                    <p className="text-sm font-semibold">分類準則</p>
                     <span className="text-xs text-teal-700 opacity-0 transition-opacity group-hover:opacity-100 dark:text-teal-300">點擊完整編輯 →</span>
                   </div>
-                  <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                    平台 API 與 MCP Agent 共用同一份規則；目前有 {project?.corrected || 0} 筆人工修正案例可供 Few-shot 使用。
-                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">{annotationInstructions.trim() ? `${annotationInstructions.length.toLocaleString()} 字元 · ${project?.corrected || 0} 筆人工修正案例` : '尚未設定分類準則'}</p>
                 </div>
                 <Badge variant={codebookDirty ? 'outline' : 'secondary'}>{codebookDirty ? '尚未儲存' : '已儲存'}</Badge>
               </div>
 
-              <div className="mt-3 rounded-xl border border-teal-200/70 bg-card/70 px-3 py-2.5 dark:border-teal-900/70">
-                {annotationInstructions.trim() ? (
-                  <p className="line-clamp-3 whitespace-pre-wrap text-sm leading-6 text-foreground/80">{annotationInstructions}</p>
-                ) : (
-                  <p className="text-sm text-muted-foreground">尚未撰寫規則。點擊這個區域開始建立 Codebook。</p>
-                )}
-              </div>
-
-              <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-                <span>{annotationInstructions.length.toLocaleString()} / 12,000 字元{codebookDirty ? ' · 開始分類時會自動儲存' : ''}</span>
-                <span className="font-medium text-teal-700 dark:text-teal-300">開啟完整 Codebook 編輯器</span>
-              </div>
+              <span className="mt-2 block text-xs font-medium text-primary">編輯分類準則 →</span>
               {instructionsMessage && (
                 <p className={`mt-2 text-xs ${instructionsMessage.startsWith('儲存失敗') ? 'text-destructive' : 'text-emerald-600 dark:text-emerald-400'}`}>
                   {instructionsMessage}
@@ -412,11 +477,11 @@ export default function LLMSettingsModal({ projectId: pid, open, onClose, onTask
               )}
             </button>
 
-            <section className="space-y-4 rounded-2xl border border-border p-4">
+            <section className="space-y-4 rounded-xl border border-border p-4">
               <div>
-                <p className="text-sm font-semibold">2. 執行分類</p>
+                <p className="text-sm font-semibold">執行設定</p>
                 <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                  選擇這次要由平台背景模型執行，或交給已連線的 Codex / ChatGPT / Claude Code Agent。
+                  系統會記住本次選擇，試跑完成後可直接繼續。
                 </p>
               </div>
 
@@ -446,8 +511,11 @@ export default function LLMSettingsModal({ projectId: pid, open, onClose, onTask
                 </button>
               </div>
 
-              <div className="space-y-2">
-                <Label className="text-xs font-medium">資料範圍</Label>
+              <button type="button" onClick={() => setScopeOpen(value => !value)} className="flex w-full items-center justify-between rounded-lg bg-muted/40 px-3 py-2.5 text-left">
+                <span className="text-sm"><span className="text-muted-foreground">資料範圍　</span>{taskTarget === 'pending' ? `待審資料 ${project?.pending ?? '—'} 筆` : taskTarget === 'parse_failed' ? '只重跑失敗' : `全部資料 ${project?.total_rows ?? '—'} 筆`}</span>
+                <span className="text-xs text-primary">{scopeOpen ? '收起' : '變更'}</span>
+              </button>
+              {scopeOpen && <div className="space-y-2">
                 <RadioGroup
                   value={taskTarget}
                   onValueChange={value => setTaskTarget(value as 'pending' | 'all' | 'parse_failed')}
@@ -475,7 +543,7 @@ export default function LLMSettingsModal({ projectId: pid, open, onClose, onTask
                     </span>
                   </label>
                 </RadioGroup>
-              </div>
+              </div>}
 
               {executionMode === 'api' ? (
                 <div className="space-y-4 rounded-xl bg-muted/30 p-4">
@@ -527,8 +595,8 @@ export default function LLMSettingsModal({ projectId: pid, open, onClose, onTask
                         </label>
                       )}
 
-                      <div className="flex justify-end">
-                        <Button onClick={startApiTask} disabled={starting || configuredSlots.length === 0}>
+                      <div className="hidden">
+                        <Button onClick={() => startApiTask('full')} disabled={starting || configuredSlots.length === 0}>
                           {starting ? '啟動中…' : compareModels ? `開始 ${compareSlots.length} 個模型分類` : '開始背景分類'}
                         </Button>
                       </div>
@@ -574,8 +642,8 @@ export default function LLMSettingsModal({ projectId: pid, open, onClose, onTask
                     <Button variant="outline" size="sm" onClick={() => setAdvancedOpen(true)}>管理連線</Button>
                   </div>
 
-                  <div className="flex justify-end">
-                    <Button onClick={startMcpTask} disabled={starting || activeTasks.some(task => task.slot === mcpSlot)}>
+                  <div className="hidden">
+                    <Button onClick={() => startMcpTask('full')} disabled={starting || activeTasks.some(task => task.slot === mcpSlot)}>
                       {starting ? '建立中…' : `建立 ${mcpAgent === 'codex' ? 'Codex' : 'Claude Code'} 分類任務`}
                     </Button>
                   </div>
@@ -604,17 +672,35 @@ export default function LLMSettingsModal({ projectId: pid, open, onClose, onTask
               {taskError && <p className="text-sm text-destructive">{taskError}</p>}
             </section>
 
-            <section className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-muted/30 p-4">
+            <section className="hidden">
               <div>
                 <p className="text-sm font-medium">模型、Prompt、Few-shot 或 MCP 連線</p>
                 <p className="mt-1 text-xs text-muted-foreground">這些低頻設定集中在進階設定；完整任務紀錄也在同一處。</p>
               </div>
               <Button variant="outline" onClick={() => setAdvancedOpen(true)}>開啟進階設定</Button>
             </section>
+            </div>
           </div>
 
-          <DialogFooter className="shrink-0 border-t px-6 py-3">
-            <Button variant="outline" onClick={onClose}>關閉</Button>
+          <DialogFooter className="shrink-0 border-t px-6 py-3 sm:justify-between">
+            {trialResults.length > 0 ? (
+              <>
+                <div className="flex gap-2">
+                  <Button variant="ghost" onClick={() => executionMode === 'api' ? startApiTask('trial', false) : startMcpTask('trial', false)} disabled={starting}>換一批</Button>
+                  <Button variant="outline" onClick={() => { setTrialResults([]); setCodebookOpen(true) }}>調整準則再試一次</Button>
+                </div>
+                <Button onClick={() => executionMode === 'api' ? startApiTask('full') : startMcpTask('full')} disabled={starting}>
+                  {starting ? '啟動中…' : `繼續分類剩餘 ${Math.max(0, (taskTarget === 'pending' ? project?.pending || 0 : project?.total_rows || 0) - trialResults.length)} 筆`}
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button variant="ghost" onClick={() => executionMode === 'api' ? startApiTask('full') : startMcpTask('full')} disabled={starting}>直接執行全部</Button>
+                <Button onClick={() => executionMode === 'api' ? startApiTask('trial') : startMcpTask('trial')} disabled={starting || (executionMode === 'api' && configuredSlots.length === 0)}>
+                  {starting ? '啟動中…' : '試跑 20 筆'}
+                </Button>
+              </>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -626,6 +712,7 @@ export default function LLMSettingsModal({ projectId: pid, open, onClose, onTask
         onChange={value => {
           setAnnotationInstructions(value)
           setInstructionsMessage(null)
+          setTrialResults([])
         }}
         correctedExamples={project?.corrected || 0}
         dirty={codebookDirty}
@@ -635,7 +722,7 @@ export default function LLMSettingsModal({ projectId: pid, open, onClose, onTask
       />
 
       {open && !codebookOpen && (
-        <TaskDock tasks={tasks} slots={slots} onStop={stopTask} onDelete={deleteTask} />
+        <TaskDock tasks={tasks} slots={slots} onStop={stopTask} onDelete={deleteTask} onViewTrial={viewTrial} />
       )}
     </>
   )
