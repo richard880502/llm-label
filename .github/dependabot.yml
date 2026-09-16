@@ -1,0 +1,68 @@
+version: 2
+
+updates:
+  - package-ecosystem: "pip"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "03:00"
+      timezone: "Asia/Taipei"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(backend)"
+
+  - package-ecosystem: "pip"
+    directory: "/mcp_server"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "03:15"
+      timezone: "Asia/Taipei"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(mcp)"
+
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "03:30"
+      timezone: "Asia/Taipei"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(frontend)"
+
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "04:00"
+      timezone: "Asia/Taipei"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(docker)"
+
+  - package-ecosystem: "docker"
+    directory: "/mcp_server"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "04:15"
+      timezone: "Asia/Taipei"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(mcp-docker)"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "04:30"
+      timezone: "Asia/Taipei"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"
