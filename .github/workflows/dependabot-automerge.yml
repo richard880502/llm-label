@@ -13,7 +13,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
-  checks: read
+  actions: read
 
 jobs:
   automerge:
@@ -36,7 +36,7 @@ jobs:
             }
             core.setOutput('number', String(prs[0].number));
 
-      - name: Check Dependabot update type and CI status
+      - name: Check Dependabot update type and all workflow results
         if: steps.pr.outputs.number != ''
         id: eligibility
         uses: actions/github-script@v7
@@ -63,15 +63,15 @@ jobs:
               return;
             }
 
-            const commitMessage = `${pr.title}\n${pr.body || ''}`;
-            const semverMatch = commitMessage.match(/from\s+v?(\d+)\.(\d+)\.(\d+)\s+to\s+v?(\d+)\.(\d+)\.(\d+)/i);
+            const text = `${pr.title}\n${pr.body || ''}`;
+            const semverMatch = text.match(/from\s+v?(\d+)\.(\d+)\.(\d+)\s+to\s+v?(\d+)\.(\d+)\.(\d+)/i);
             if (!semverMatch) {
               core.notice('Could not prove this is a semantic-version patch update; leaving it for manual review.');
               core.setOutput('merge', 'false');
               return;
             }
 
-            const [, oldMajor, oldMinor, oldPatch, newMajor, newMinor, newPatch] = semverMatch.map(Number);
+            const [oldMajor, oldMinor, oldPatch, newMajor, newMinor, newPatch] = semverMatch.slice(1).map(Number);
             const isPatch = oldMajor === newMajor && oldMinor === newMinor && newPatch > oldPatch;
             if (!isPatch) {
               core.notice('Dependabot update is not patch-only; leaving it for manual review.');
@@ -79,41 +79,41 @@ jobs:
               return;
             }
 
-            const { data: checks } = await github.rest.checks.listForRef({
+            const expected = ['CI', 'Docker', 'CodeQL', 'Dependency Review'];
+            const { data: runs } = await github.rest.actions.listWorkflowRunsForRepo({
               owner,
               repo,
-              ref: pr.head.sha,
+              head_sha: pr.head.sha,
+              event: 'pull_request',
               per_page: 100,
             });
 
-            const relevant = checks.check_runs.filter(run =>
-              !['Dependabot auto-merge'].includes(run.name)
-            );
-
-            const pending = relevant.filter(run => run.status !== 'completed');
-            const failed = relevant.filter(run =>
-              run.status === 'completed' &&
-              !['success', 'neutral', 'skipped'].includes(run.conclusion)
-            );
-
-            if (pending.length > 0) {
-              core.notice(`Waiting for ${pending.length} check(s) to complete.`);
-              core.setOutput('merge', 'false');
-              return;
+            const latestByName = new Map();
+            for (const run of runs.workflow_runs) {
+              const current = latestByName.get(run.name);
+              if (!current || new Date(run.created_at) > new Date(current.created_at)) {
+                latestByName.set(run.name, run);
+              }
             }
 
-            if (failed.length > 0) {
-              core.warning(`Not merging because ${failed.length} check(s) failed.`);
-              core.setOutput('merge', 'false');
-              return;
+            for (const name of expected) {
+              const run = latestByName.get(name);
+              if (!run) {
+                core.notice(`Waiting for required workflow: ${name}`);
+                core.setOutput('merge', 'false');
+                return;
+              }
+              if (run.status !== 'completed') {
+                core.notice(`Workflow ${name} is still ${run.status}.`);
+                core.setOutput('merge', 'false');
+                return;
+              }
+              if (!['success', 'neutral', 'skipped'].includes(run.conclusion)) {
+                core.warning(`Workflow ${name} concluded with ${run.conclusion}; refusing to merge.`);
+                core.setOutput('merge', 'false');
+                return;
+              }
             }
-
-            const expectedWorkflowNames = ['CI', 'Docker', 'CodeQL', 'Dependency Review'];
-            const completedNames = new Set(
-              relevant
-                .filter(run => run.status === 'completed' && ['success', 'neutral', 'skipped'].includes(run.conclusion))
-                .map(run => run.name)
-            );
 
             core.setOutput('merge', 'true');
             core.setOutput('head_sha', pr.head.sha);
