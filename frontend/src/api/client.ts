@@ -136,6 +136,14 @@ export interface TaskResult {
   result: Record<string, unknown> | null
 }
 
+export interface AssistantMessage {
+  id: number
+  role: 'user' | 'assistant'
+  content: string
+  source: 'web' | 'line'
+  created_at: string
+}
+
 export interface ApiToken {
   id: number
   name: string
@@ -351,5 +359,17 @@ export const api = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ slot, target }),
+    }),
+
+  // project task assistant
+  getAssistantStatus: () =>
+    request<{ configured: boolean; reachable: boolean; agent_id: string }>('/assistant/status'),
+  listAssistantMessages: (projectId: number) =>
+    request<AssistantMessage[]>(`/assistant/${projectId}/messages`),
+  sendAssistantMessage: (projectId: number, message: string, row_ids: number[] = []) =>
+    request<AssistantMessage>(`/assistant/${projectId}/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message, row_ids }),
     }),
 }

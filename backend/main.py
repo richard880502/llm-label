@@ -12,6 +12,7 @@ from .database import init_db
 from .llm.classifier import resume_stale_api_tasks, start_api_task_watchdog
 from .routers import export, projects, rows
 from .routers import auth as auth_router
+from .routers import assistant as assistant_router
 from .routers import imports as imports_router
 from .routers import oauth as oauth_router
 from .routers import presence as presence_router
@@ -49,6 +50,7 @@ def on_startup():
 
 
 app.include_router(auth_router.router, prefix="/api/auth", tags=["auth"])
+app.include_router(assistant_router.router, prefix="/api/assistant", tags=["assistant"])
 app.include_router(oauth_router.router, prefix="/api/oauth", tags=["oauth"])
 app.include_router(
     users_router.router,
