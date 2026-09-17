@@ -8,7 +8,7 @@ import httpx
 
 OPENCLAW_BASE_URL = os.getenv(
     "OPENCLAW_BASE_URL",
-    "http://service-6a9acbdc73ef6eb935f33fce",
+    "https://duduclaw-6a98317e.zeabur.app",
 ).rstrip("/")
 OPENCLAW_API_TOKEN = os.getenv("OPENCLAW_API_TOKEN", "")
 OPENCLAW_AGENT_ID = os.getenv("OPENCLAW_AGENT_ID", "main")
