@@ -57,10 +57,11 @@ export default function ProjectAssistantDock() {
   const [open, setOpen] = useState(false)
   const [messages, setMessages] = useState<AssistantMessage[]>([])
   const [input, setInput] = useState('')
-  const [sending, setSending] = useState(false)
+  const [pendingRequests, setPendingRequests] = useState(0)
   const [executing, setExecuting] = useState<number | null>(null)
   const [error, setError] = useState('')
   const endRef = useRef<HTMLDivElement>(null)
+  const optimisticIdRef = useRef(-Date.now())
 
   useEffect(() => {
     setMessages([])
@@ -71,31 +72,29 @@ export default function ProjectAssistantDock() {
 
   useEffect(() => {
     if (open) endRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [open, messages, sending])
+  }, [open, messages, pendingRequests])
 
   if (!projectId || !user) return null
 
   const send = async (event: FormEvent) => {
     event.preventDefault()
     const message = input.trim()
-    if (!message || sending) return
+    if (!message) return
     const optimistic: AssistantMessage = {
-      id: -Date.now(), role: 'user', content: message, source: 'web', created_at: '',
+      id: optimisticIdRef.current--, role: 'user', content: message, source: 'web', created_at: '',
       action: null, action_status: null, action_result: null,
     }
     setMessages(current => [...current, optimistic])
     setInput('')
     setError('')
-    setSending(true)
+    setPendingRequests(count => count + 1)
     try {
       const reply = await api.sendAssistantMessage(projectId, message, rowIds)
-      setMessages(current => [...current, reply])
+      setMessages(current => current.flatMap(item => item.id === optimistic.id ? [item, reply] : [item]))
     } catch (error) {
-      setMessages(current => current.filter(item => item.id !== optimistic.id))
-      setInput(message)
       setError(error instanceof Error ? error.message : '任務助手暫時無法回覆')
     } finally {
-      setSending(false)
+      setPendingRequests(count => Math.max(0, count - 1))
     }
   }
 
@@ -168,7 +167,7 @@ export default function ProjectAssistantDock() {
                 </div>
               )
             })}
-            {sending && <div className="flex items-center gap-2 text-xs text-muted-foreground"><LoaderCircle size={14} className="animate-spin" />正在理解專案與任務狀態…</div>}
+            {pendingRequests > 0 && <div className="flex items-center gap-2 text-xs text-muted-foreground"><LoaderCircle size={14} className="animate-spin" />正在處理 {pendingRequests} 則訊息，你可以繼續傳送…</div>}
             <div ref={endRef} />
           </div>
 
@@ -176,7 +175,7 @@ export default function ProjectAssistantDock() {
             {error && <p className="mb-2 rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">{error}</p>}
             <div className="flex items-end gap-2 rounded-2xl border border-input bg-background/75 p-1.5 shadow-inner focus-within:ring-2 focus-within:ring-ring/30">
               <textarea value={input} onChange={event => setInput(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit() } }} rows={2} placeholder="例如：先用 10 筆待審資料試跑 LLM 1" className="min-h-10 flex-1 resize-none bg-transparent px-2 py-1.5 text-sm outline-none placeholder:text-muted-foreground/70" />
-              <Button type="submit" size="icon" className="rounded-xl" disabled={!input.trim() || sending} aria-label="傳送"><Send size={16} /></Button>
+              <Button type="submit" size="icon" className="rounded-xl" disabled={!input.trim()} aria-label="傳送"><Send size={16} /></Button>
             </div>
             <p className="mt-1.5 px-1 text-[10px] text-muted-foreground">Enter 傳送 · Shift + Enter 換行</p>
           </form>
