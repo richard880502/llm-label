@@ -1,6 +1,7 @@
 from unittest.mock import Mock, patch
 
 from backend.assistant.openclaw import _output_text, send_to_openclaw
+from backend.routers.assistant import _extract_action
 
 
 def test_output_text_collects_assistant_message_parts():
@@ -41,3 +42,27 @@ def test_send_to_openclaw_uses_stable_user_and_previous_response(mock_post):
     assert body["user"] == "llm-label:3:alice"
     assert body["previous_response_id"] == "resp_1"
     assert body["instructions"] == "project context"
+
+
+def test_extract_action_keeps_markdown_and_validates_proposal():
+    reply = """## 建議先試跑\n\n確認後會抽樣 10 筆。\n<assistant_action>{"type":"create_task","target":"pending","slot":1,"run_kind":"trial","sample_size":10}</assistant_action>"""
+
+    content, action = _extract_action(reply)
+
+    assert content == "## 建議先試跑\n\n確認後會抽樣 10 筆。"
+    assert action == {
+        "type": "create_task",
+        "target": "pending",
+        "slot": 1,
+        "run_kind": "trial",
+        "sample_size": 10,
+    }
+
+
+def test_extract_action_rejects_unapproved_action_type():
+    reply = '不要執行<assistant_action>{"type":"delete_project","project_id":1}</assistant_action>'
+
+    content, action = _extract_action(reply)
+
+    assert content == "不要執行"
+    assert action is None

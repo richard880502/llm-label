@@ -465,6 +465,9 @@ SCHEMA_STATEMENTS = [
         role            TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
         content         TEXT NOT NULL,
         source          TEXT NOT NULL DEFAULT 'web',
+        action_json     TEXT,
+        action_status   TEXT CHECK (action_status IN ('pending', 'executing', 'completed', 'failed')),
+        action_result   TEXT,
         created_at      TEXT NOT NULL DEFAULT to_char(CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Taipei', 'YYYY-MM-DD HH24:MI:SS')
     )
     """,
@@ -494,6 +497,9 @@ def init_db(*, seed_admin: bool = True) -> None:
         conn.execute(
             "ALTER TABLE projects ADD COLUMN IF NOT EXISTS annotation_instructions TEXT NOT NULL DEFAULT ''"
         )
+        conn.execute("ALTER TABLE assistant_messages ADD COLUMN IF NOT EXISTS action_json TEXT")
+        conn.execute("ALTER TABLE assistant_messages ADD COLUMN IF NOT EXISTS action_status TEXT")
+        conn.execute("ALTER TABLE assistant_messages ADD COLUMN IF NOT EXISTS action_result TEXT")
         _fix_pipe_labels(conn)
         if seed_admin:
             _ensure_admin(conn)

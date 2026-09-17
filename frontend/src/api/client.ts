@@ -141,8 +141,15 @@ export interface AssistantMessage {
   role: 'user' | 'assistant'
   content: string
   source: 'web' | 'line'
+  action: AssistantAction | null
+  action_status: 'pending' | 'executing' | 'completed' | 'failed' | null
+  action_result: { message?: string; error?: string; task?: Task } | null
   created_at: string
 }
+
+export type AssistantAction =
+  | { type: 'create_task'; target: 'pending' | 'all' | 'parse_failed'; slot: number; run_kind: 'trial' | 'full'; sample_size?: number }
+  | { type: 'cancel_task'; task_id: number }
 
 export interface ApiToken {
   id: number
@@ -371,5 +378,9 @@ export const api = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message, row_ids }),
+    }),
+  executeAssistantAction: (projectId: number, messageId: number) =>
+    request<{ status: 'completed'; result: { message: string; task: Task } }>(`/assistant/${projectId}/actions/${messageId}/execute`, {
+      method: 'POST',
     }),
 }
