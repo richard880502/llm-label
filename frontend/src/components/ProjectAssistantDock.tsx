@@ -40,7 +40,7 @@ function actionDetails(action: AssistantAction) {
     title: action.run_kind === 'trial' ? '建立試跑任務' : '建立完整分類任務',
     details: [
       `資料範圍：${TARGET_LABEL[action.target]}`,
-      `使用結果槽：LLM ${action.slot}`,
+      `執行模型：網站設定的 LLM API（LLM ${action.slot}）`,
       ...(action.run_kind === 'trial' ? [`隨機抽樣：${action.sample_size ?? 10} 筆`] : []),
     ],
   }

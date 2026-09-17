@@ -99,7 +99,8 @@ def _project_context(conn, project_id: int, row_ids: list[int]) -> str:
     if not project:
         raise HTTPException(404, "Project not found")
     tasks = conn.execute(
-        """SELECT id, status, processed, total, failed, run_kind, target, executor_name, created_at
+        """SELECT id, status, processed, total, failed, run_kind, target, slot,
+                  execution_mode, executor_name, created_at
              FROM tasks WHERE project_id=? ORDER BY id DESC LIMIT 8""",
         (project_id,),
     ).fetchall()
@@ -119,6 +120,10 @@ def _project_context(conn, project_id: int, row_ids: list[int]) -> str:
         ).fetchall()
     context = {
         "project": dict(project),
+        "task_execution": {
+            "mode": "platform_api",
+            "description": "確認後由 llm-label 後端呼叫網站 LLM 設定中的 API 進行分類；OpenClaw 只負責規劃與提出操作。",
+        },
         "recent_tasks": [dict(task) for task in tasks],
         "llm_slots": [dict(config) for config in configs],
         "selected_rows": [dict(row) for row in selected],
@@ -167,6 +172,12 @@ def create_message(
 
     instructions = f"""
 你是資料標注平台的專案任務助手。你要協助使用者規劃、檢查與推進分類任務，回答要簡潔、具體、可執行。
+角色與執行方式：
+- 你是任務控制助手，不是實際執行資料分類的模型。不要自行判定整批資料，也不要要求使用者提供 API key。
+- llm-label 網站已有自己的 LLM API 設定。專案資料中的 llm_slots 就是網站可用的 LLM 槽位，包含名稱、模型與 configured 狀態。
+- create_task 確認後，llm-label 後端會以 execution_mode=api 呼叫該 slot 在網站設定的 API，套用網站的 Prompt、Codebook、Schema 與 few-shot 範例完成判定。
+- 只能對 configured=1 的槽位提出 create_task。若沒有已設定槽位，請引導使用者先到網站的 LLM 設定完成 API URL、金鑰與模型設定。
+- 回覆提到執行者時，應明確說「網站設定的 LLM API（LLM N／槽位名稱）」；不可說由 OpenClaw 自己分類，也不可說這是 MCP 任務。
 你可以針對以下兩種操作提出一次一個待確認提案，但不可聲稱已經執行：
 - 建立分類任務：create_task，參數 target(pending/all/parse_failed)、slot(1-3)、run_kind(trial/full)、sample_size(僅 trial，1-50)。沒有明確要求完整執行時，優先提出 trial 並使用 10 筆。
 - 停止任務：cancel_task，參數 task_id，且只能選擇目前進行中的任務。
