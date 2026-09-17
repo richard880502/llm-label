@@ -152,6 +152,26 @@ def list_messages(project_id: int, user: CurrentUser = Depends(get_current_user)
     return [_message_payload(message) for message in messages]
 
 
+@router.delete("/{project_id}/messages")
+def clear_messages(project_id: int, user: CurrentUser = Depends(get_current_user)):
+    """Clear only the current user's assistant conversation for this project.
+
+    Deleting the conversation also deletes its messages via the database cascade and
+    removes the stored OpenClaw response id, so the next message starts a fresh context.
+    """
+
+    with get_db() as conn:
+        project = conn.execute("SELECT id FROM projects WHERE id=?", (project_id,)).fetchone()
+        if not project:
+            raise HTTPException(404, "Project not found")
+        deleted = conn.execute(
+            "DELETE FROM assistant_conversations WHERE project_id=? AND username=?",
+            (project_id, user.username),
+        )
+        conn.commit()
+    return {"ok": True, "cleared": deleted.rowcount > 0}
+
+
 @router.post("/{project_id}/messages")
 def create_message(
     project_id: int,
