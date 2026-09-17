@@ -1,10 +1,10 @@
 import { FormEvent, useEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
-import { Bot, CheckCircle2, FlaskConical, LoaderCircle, Play, Send, Sparkles, Square, X } from 'lucide-react'
+import { Bot, CheckCircle2, FlaskConical, LoaderCircle, Play, Send, Sparkles, Square, Trash2, X } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
-import { api, AssistantAction, AssistantMessage } from '../api/client'
+import { api, AssistantAction, AssistantMessage, getToken } from '../api/client'
 import { useAuth } from '../context/AuthContext'
 import { Button } from '@/components/ui/button'
 
@@ -56,6 +56,7 @@ export default function ProjectAssistantDock() {
   const [messages, setMessages] = useState<AssistantMessage[]>([])
   const [input, setInput] = useState('')
   const [pendingRequests, setPendingRequests] = useState(0)
+  const [clearing, setClearing] = useState(false)
   const [error, setError] = useState('')
   const endRef = useRef<HTMLDivElement>(null)
   const optimisticIdRef = useRef(-Date.now())
@@ -72,6 +73,40 @@ export default function ProjectAssistantDock() {
   }, [open, messages, pendingRequests])
 
   if (!projectId || !user) return null
+
+  const clearConversation = async () => {
+    if (pendingRequests > 0 || clearing || messages.length === 0) return
+    if (!window.confirm('確定要清除目前專案的任務助手對話嗎？\n\n只會清除你自己的對話，其他使用者不受影響。清除後下一則訊息會開啟全新的 OpenClaw 對話。')) return
+
+    setClearing(true)
+    setError('')
+    try {
+      const token = getToken()
+      const response = await fetch(`/api/assistant/${projectId}/messages`, {
+        method: 'DELETE',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        cache: 'no-store',
+      })
+      if (response.status === 401) {
+        window.location.href = '/login'
+        return
+      }
+      if (!response.ok) {
+        let message = '無法清除任務助手對話'
+        try {
+          const payload = await response.json()
+          message = payload.detail || message
+        } catch { /* ignore malformed error response */ }
+        throw new Error(message)
+      }
+      setMessages([])
+      setInput('')
+    } catch (error) {
+      setError(error instanceof Error ? error.message : '無法清除任務助手對話')
+    } finally {
+      setClearing(false)
+    }
+  }
 
   const send = async (event: FormEvent) => {
     event.preventDefault()
@@ -105,7 +140,19 @@ export default function ProjectAssistantDock() {
               <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-lg shadow-primary/20"><Sparkles size={17} /></div>
               <div><p className="text-sm font-semibold tracking-tight">專案任務助手</p><p className="text-[11px] text-muted-foreground">OpenClaw · 操作會自動執行</p></div>
             </div>
-            <Button variant="ghost" size="icon" onClick={() => setOpen(false)} aria-label="關閉任務助手"><X size={17} /></Button>
+            <div className="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={clearConversation}
+                disabled={messages.length === 0 || pendingRequests > 0 || clearing}
+                aria-label="清除任務助手對話"
+                title="清除我的任務助手對話"
+              >
+                {clearing ? <LoaderCircle size={16} className="animate-spin" /> : <Trash2 size={16} />}
+              </Button>
+              <Button variant="ghost" size="icon" onClick={() => setOpen(false)} aria-label="關閉任務助手"><X size={17} /></Button>
+            </div>
           </header>
 
           <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 [scrollbar-gutter:stable]">
