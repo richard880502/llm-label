@@ -1,6 +1,8 @@
 from unittest.mock import Mock, patch
 
-from backend.assistant.openclaw import _output_text, send_to_openclaw
+import pytest
+
+from backend.assistant.openclaw import OpenClawError, _output_text, send_to_openclaw
 from backend.routers.assistant import _extract_action
 
 
@@ -41,7 +43,23 @@ def test_send_to_openclaw_uses_stable_user_and_previous_response(mock_post):
     body = mock_post.call_args.kwargs["json"]
     assert body["user"] == "llm-label:3:alice"
     assert body["previous_response_id"] == "resp_1"
-    assert body["instructions"] == "project context"
+    assert "project context" in body["instructions"]
+    assert "不得使用 OpenClaw 自身的檔案系統" in body["instructions"]
+    assert "平台變更只能透過本次 instructions 明確列出的 <assistant_action>" in body["instructions"]
+
+
+@patch("backend.assistant.openclaw.httpx.post")
+def test_send_to_openclaw_rejects_main_agent(mock_post):
+    with patch("backend.assistant.openclaw.OPENCLAW_AGENT_ID", "main"):
+        with pytest.raises(OpenClawError, match="不可使用 main"):
+            send_to_openclaw(
+                conversation_key="llm-label:3:alice",
+                message="跑十筆",
+                instructions="project context",
+                previous_response_id=None,
+            )
+
+    mock_post.assert_not_called()
 
 
 def test_extract_action_keeps_markdown_and_validates_proposal():
