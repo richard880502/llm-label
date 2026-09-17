@@ -1,5 +1,4 @@
 import { FormEvent, useEffect, useRef, useState } from 'react'
-import { useQueryClient } from '@tanstack/react-query'
 import { useLocation } from 'react-router-dom'
 import { Bot, CheckCircle2, FlaskConical, LoaderCircle, Play, Send, Sparkles, Square, X } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
@@ -49,7 +48,6 @@ function actionDetails(action: AssistantAction) {
 export default function ProjectAssistantDock() {
   const { user } = useAuth()
   const location = useLocation()
-  const queryClient = useQueryClient()
   const projectMatch = location.pathname.match(/^\/projects\/(\d+)/)
   const projectId = projectMatch ? Number(projectMatch[1]) : null
   const rowMatch = location.pathname.match(/\/review\/(\d+)/)
@@ -58,7 +56,6 @@ export default function ProjectAssistantDock() {
   const [messages, setMessages] = useState<AssistantMessage[]>([])
   const [input, setInput] = useState('')
   const [pendingRequests, setPendingRequests] = useState(0)
-  const [executing, setExecuting] = useState<number | null>(null)
   const [error, setError] = useState('')
   const endRef = useRef<HTMLDivElement>(null)
   const optimisticIdRef = useRef(-Date.now())
@@ -98,25 +95,6 @@ export default function ProjectAssistantDock() {
     }
   }
 
-  const execute = async (messageId: number) => {
-    setExecuting(messageId)
-    setError('')
-    try {
-      const { result } = await api.executeAssistantAction(projectId, messageId)
-      setMessages(current => current.map(message => message.id === messageId
-        ? { ...message, action_status: 'completed', action_result: result }
-        : message))
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['tasks', projectId] }),
-        queryClient.invalidateQueries({ queryKey: ['project', projectId] }),
-      ])
-    } catch (error) {
-      setError(error instanceof Error ? error.message : '操作執行失敗')
-    } finally {
-      setExecuting(null)
-    }
-  }
-
   return (
     <div className="fixed inset-x-3 bottom-3 z-[80] flex flex-col items-end gap-3 sm:inset-x-auto sm:bottom-6 sm:left-6 sm:items-start">
       {open && (
@@ -125,7 +103,7 @@ export default function ProjectAssistantDock() {
             <div className="pointer-events-none absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-primary/50 to-transparent" />
             <div className="flex items-center gap-3">
               <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-lg shadow-primary/20"><Sparkles size={17} /></div>
-              <div><p className="text-sm font-semibold tracking-tight">專案任務助手</p><p className="text-[11px] text-muted-foreground">OpenClaw · 操作前會先讓你確認</p></div>
+              <div><p className="text-sm font-semibold tracking-tight">專案任務助手</p><p className="text-[11px] text-muted-foreground">OpenClaw · 操作會自動執行</p></div>
             </div>
             <Button variant="ghost" size="icon" onClick={() => setOpen(false)} aria-label="關閉任務助手"><X size={17} /></Button>
           </header>
@@ -141,7 +119,6 @@ export default function ProjectAssistantDock() {
             {messages.map(message => {
               const proposal = message.action ? actionDetails(message.action) : null
               const ProposalIcon = proposal?.icon
-              const isExecuting = executing === message.id
               return (
                 <div key={message.id} className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                   <div className={`max-w-[91%] ${message.role === 'user' ? '' : 'w-full'}`}>
@@ -157,8 +134,10 @@ export default function ProjectAssistantDock() {
                         <div className="flex items-center justify-between border-t border-primary/10 bg-background/35 px-3.5 py-2.5">
                           {message.action_status === 'completed' ? (
                             <span className="flex items-center gap-1.5 text-xs font-medium text-emerald-600 dark:text-emerald-400"><CheckCircle2 size={14} /> {message.action_result?.message ?? '操作完成'}</span>
+                          ) : message.action_status === 'failed' ? (
+                            <span className="text-xs font-medium text-destructive">自動執行失敗：{message.action_result?.error ?? '請檢查任務設定後重試'}</span>
                           ) : (
-                            <><span className="text-[11px] text-muted-foreground">確認後才會執行</span><Button size="sm" onClick={() => execute(message.id)} disabled={isExecuting}>{isExecuting ? <><LoaderCircle className="animate-spin" />執行中</> : '確認執行'}</Button></>
+                            <span className="flex items-center gap-1.5 text-xs text-muted-foreground"><LoaderCircle size={14} className="animate-spin" />正在自動執行…</span>
                           )}
                         </div>
                       </div>
