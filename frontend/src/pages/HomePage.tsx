@@ -29,7 +29,7 @@ export default function HomePage() {
   }
 
   return (
-    <div className="min-h-screen">
+    <div className="home-workspace min-h-screen">
       <header className="sticky top-0 z-40 backdrop-blur-2xl bg-white/45 dark:bg-black/25 border-b border-black/8 dark:border-white/8 shadow-sm shadow-black/5">
         <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
           <div>

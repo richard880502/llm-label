@@ -220,6 +220,62 @@ html.dark .assistant-glass-trigger {
 }
 
 /* Reading sections sit inside one shared glass frame. */
+.mobile-review-tabs { display: none; }
+
+@media (max-width: 639px) {
+  .home-workspace > header > div { padding: 16px; flex-wrap: wrap; gap: 14px; }
+  .home-workspace > header > div > div { width: 100%; }
+  .home-workspace > header > div > div:last-child { justify-content: space-between; }
+  .home-workspace > main, .project-workspace > main { padding: 20px 16px 100px; }
+  .home-workspace [data-slot="card-header"] { display: flex; flex-direction: column; align-items: stretch; }
+  .home-workspace [data-slot="card-title"], .home-workspace [data-slot="card-description"] { overflow-wrap: anywhere; }
+  .home-workspace [data-slot="card-action"] { align-self: stretch; margin-top: 10px; }
+  .home-workspace [data-slot="card-action"] > div { display: grid; grid-template-columns: 1fr 1.4fr 1fr; }
+  .home-workspace [data-slot="card-content"] > div:first-child { flex-wrap: wrap; gap: 10px 16px; }
+  .project-workspace > header > div { padding: 12px 16px; flex-wrap: wrap; }
+  .project-workspace > header h1 { flex-basis: calc(100% - 110px); }
+  .project-workspace > header h1 + div { flex: 1; flex-wrap: wrap; }
+  .project-workspace table, .project-workspace tbody { display: block; width: 100%; }
+  .project-workspace thead { display: block; }
+  .project-workspace thead tr { display: block; }
+  .project-workspace thead th:not(:first-child) { display: none; }
+  .project-workspace thead th:first-child { display: flex; align-items: center; width: auto; gap: 10px; }
+  .project-workspace thead th:first-child::after { content: "選取本頁資料"; font-size: 12px; font-weight: 400; }
+  .project-workspace tbody tr { display: grid; grid-template-columns: 24px minmax(20px, 1fr) auto auto auto; gap: 8px; padding: 16px; align-items: center; }
+  .project-workspace tbody td { padding: 0; min-width: 0; }
+  .project-workspace tbody td:nth-child(3) { grid-column: 1 / -1; grid-row: 2; max-width: none; }
+  .project-workspace tbody td:nth-child(3) p { white-space: normal; overflow-wrap: anywhere; line-height: 1.7; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+  .project-workspace tbody td:nth-child(4) { grid-column: 3; grid-row: 1; }
+  .project-workspace tbody td:nth-child(5) { grid-column: 1 / -1; grid-row: 3; }
+  .project-workspace tbody td:nth-child(6) { grid-column: 5; grid-row: 1; }
+  .project-workspace tbody td:nth-child(7) { grid-column: 4; grid-row: 1; text-align: right; }
+  .home-workspace button, .project-workspace button { min-height: 44px; }
+  .home-workspace input, .project-workspace input { min-height: 44px; font-size: 16px; }
+  .project-workspace input[type="checkbox"] { min-height: 20px; width: 20px; height: 20px; }
+}
+
+@media (max-width: 1023px) {
+  .review-workspace { padding-bottom: calc(144px + env(safe-area-inset-bottom)); }
+  .review-workspace > header > div { gap: 6px; padding: 10px 12px; }
+  .review-workspace > header > div > div:last-child { width: 100%; flex-wrap: wrap; justify-content: space-between; }
+  .review-workspace > header .review-user-menu { position: absolute; top: 10px; right: 12px; }
+  .review-workspace > header button { min-height: 44px; font-size: 12px; padding-inline: 8px; }
+  .review-workspace > header > div > div:first-child { gap: 8px; padding-right: 120px; }
+  .review-workspace > header > div > div:last-child > span { font-size: 11px; }
+  .mobile-review-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin: 16px 16px 0; padding: 4px; border-radius: 14px; background: var(--muted); }
+  .mobile-review-tabs button { min-height: 44px; border-radius: 10px; color: var(--muted-foreground); font-size: 14px; font-weight: 600; }
+  .mobile-review-tabs button[aria-pressed="true"] { color: var(--primary); background: var(--card); box-shadow: 0 2px 8px #0000000a; }
+  .review-workspace[data-mobile-panel="analysis"] .review-reading { display: none; }
+  .review-workspace[data-mobile-panel="annotation"] .review-analysis > div:first-child { display: none; }
+  .review-workspace .review-analysis { border: 0; }
+  .review-actions { position: fixed; bottom: 0; left: 0; right: 0; z-index: 45; padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); background: var(--popover); backdrop-filter: blur(24px); }
+  .review-actions button { min-height: 48px; }
+  .review-actions button span, .review-actions > p { display: none; }
+  .review-workspace textarea { font-size: 16px; }
+  .review-reading button { min-height: 44px; }
+  .review-workspace > .fixed.bottom-6 { bottom: 100px; width: calc(100% - 32px); justify-content: center; border-radius: 16px; }
+}
+
 .review-workspace .review-reading > [data-slot="card"],
 .review-workspace .review-analysis > div > [data-slot="card"] {
   position: relative;
@@ -241,4 +297,35 @@ html.dark .assistant-glass-trigger {
   height: 1px;
   background: color-mix(in oklch, var(--border) 55%, transparent);
   pointer-events: none;
+}
+
+/* A shared compact type scale for the mobile workspace. */
+@media (max-width: 1023px) {
+  .assistant-dock-floating { left: 16px; right: auto; bottom: calc(16px + env(safe-area-inset-bottom)); align-items: flex-start; max-width: calc(50vw - 24px); }
+  .task-dock-floating { right: 16px; bottom: calc(16px + env(safe-area-inset-bottom)); max-width: calc(50vw - 24px); }
+  .task-dock > button, .assistant-dock > button { min-height: 44px; font-size: 12px; gap: 6px; padding-inline: 12px; max-width: 100%; }
+  .task-dock > button > span:nth-child(2) { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .task-dock > div, .assistant-dock > section { position: fixed; inset: auto 16px calc(76px + env(safe-area-inset-bottom)); width: auto; height: min(39rem, calc(100dvh - 180px)); margin: 0; }
+  .review-workspace .task-dock > div, .review-workspace .assistant-dock > section { bottom: calc(92px + env(safe-area-inset-bottom)); }
+}
+
+@media (max-width: 1023px) {
+  :is(.home-workspace, .project-workspace, .review-workspace) { font-size: 14px; }
+  :is(.home-workspace, .project-workspace, .review-workspace) .text-xl { font-size: 18px; }
+  :is(.home-workspace, .project-workspace, .review-workspace) .text-lg { font-size: 16px; }
+  :is(.home-workspace, .project-workspace, .review-workspace) .text-base { font-size: 14px; }
+  :is(.home-workspace, .project-workspace, .review-workspace) .text-sm { font-size: 13px; }
+  :is(.home-workspace, .project-workspace, .review-workspace) .text-xs { font-size: 11px; }
+  :is(.home-workspace, .project-workspace, .review-workspace) button,
+  :is(.home-workspace, .project-workspace, .review-workspace) [data-slot="select-trigger"] { font-size: 12px; }
+  .review-workspace .mobile-review-tabs button { font-size: 13px; }
+  .project-workspace tbody td:nth-child(3) p { font-size: 13px; line-height: 1.65; }
+  :is(.home-workspace, .project-workspace, .review-workspace) input:not([type="checkbox"]):not([type="radio"]),
+  :is(.home-workspace, .project-workspace, .review-workspace) textarea { font-size: 14px; }
+}
+
+/* iOS zooms focused inputs below 16px; retain readable input sizing on touch. */
+@media (max-width: 1023px) and (hover: none) and (pointer: coarse) {
+  :is(.home-workspace, .project-workspace, .review-workspace) input:not([type="checkbox"]):not([type="radio"]),
+  :is(.home-workspace, .project-workspace, .review-workspace) textarea { font-size: 16px; }
 }

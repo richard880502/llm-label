@@ -50,6 +50,11 @@ export default function ProjectTaskDock({ projectId }: { projectId: number }) {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [busyTaskId, setBusyTaskId] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
+  useEffect(() => {
+    const close = () => setExpanded(false)
+    window.addEventListener('mobile-assistant-open', close)
+    return () => window.removeEventListener('mobile-assistant-open', close)
+  }, [])
 
   const active = useMemo(
     () => tasks.filter(task => ACTIVE_STATUSES.has(task.status)),
@@ -116,7 +121,7 @@ export default function ProjectTaskDock({ projectId }: { projectId: number }) {
   if (typeof document === 'undefined' || dialogOpen || tasks.length === 0) return null
 
   return createPortal(
-    <div className={reviewTarget ? 'relative z-[70]' : 'fixed bottom-6 right-6 z-[70] flex flex-col items-end gap-2'}>
+    <div className={`task-dock ${reviewTarget ? 'relative z-[70]' : 'task-dock-floating fixed bottom-6 right-6 z-[70] flex flex-col items-end gap-2'}`}>
       {expanded && (
         <div className={`${reviewTarget ? 'absolute right-0 top-full mt-3' : 'mb-1'} flex h-[min(39rem,calc(100dvh-10rem))] w-[min(26rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl border border-border bg-popover/95 shadow-2xl backdrop-blur-2xl`}>
           <div className="shrink-0 flex items-center justify-between gap-3 border-b border-border px-4 py-3">
@@ -189,7 +194,10 @@ export default function ProjectTaskDock({ projectId }: { projectId: number }) {
         type="button"
         aria-live="polite"
         aria-expanded={expanded}
-        onClick={() => setExpanded(value => !value)}
+        onClick={() => {
+          if (!expanded && window.matchMedia('(max-width: 1023px)').matches) window.dispatchEvent(new Event('mobile-task-open'))
+          setExpanded(value => !value)
+        }}
         className={`relative flex items-center gap-2 border bg-popover/95 font-medium transition hover:bg-accent ${reviewTarget ? 'h-8 rounded-lg px-3 text-xs' : 'h-12 rounded-full px-4 py-2.5 text-sm shadow-xl backdrop-blur-xl'} ${
           active.length > 0 ? 'border-primary/40 ring-2 ring-primary/10' : 'border-border'
         }`}

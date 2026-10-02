@@ -74,6 +74,11 @@ export default function ProjectAssistantDock() {
   const [error, setError] = useState('')
   const endRef = useRef<HTMLDivElement>(null)
   const optimisticIdRef = useRef(-Date.now())
+  useEffect(() => {
+    const close = () => setOpen(false)
+    window.addEventListener('mobile-task-open', close)
+    return () => window.removeEventListener('mobile-task-open', close)
+  }, [])
 
   useEffect(() => {
     setMessages([])
@@ -146,7 +151,7 @@ export default function ProjectAssistantDock() {
   }
 
   const dock = (
-    <div className={reviewTarget ? 'relative z-[80]' : 'fixed inset-x-3 bottom-3 z-[80] flex flex-col items-end gap-3 sm:inset-x-auto sm:bottom-6 sm:left-6 sm:items-start'}>
+    <div className={`assistant-dock ${reviewTarget ? 'relative z-[80]' : 'assistant-dock-floating fixed inset-x-3 bottom-3 z-[80] flex flex-col items-end gap-3 sm:inset-x-auto sm:bottom-6 sm:left-6 sm:items-start'}`}>
       {open && (
         <section data-slot="card" className={`${reviewTarget ? 'absolute right-0 top-full mt-3' : ''} w-[min(26rem,calc(100vw-2rem))] flex h-[min(39rem,calc(100dvh-10rem))] flex-col overflow-hidden rounded-2xl border border-border bg-popover/95 text-card-foreground shadow-2xl backdrop-blur-2xl`}>
           <header className="relative flex items-center justify-between border-b border-border/70 px-4 py-3.5">
@@ -222,7 +227,10 @@ export default function ProjectAssistantDock() {
           </form>
         </section>
       )}
-      <button type="button" aria-expanded={open} onClick={() => setOpen(value => !value)} className={`assistant-glass-trigger flex items-center gap-2 border font-medium ${reviewTarget ? 'h-8 rounded-lg px-3 text-xs' : 'h-12 rounded-full px-4 py-2.5 text-sm'}`}><Bot size={16} /> 任務助手</button>
+      <button type="button" aria-expanded={open} onClick={() => {
+        if (!open && window.matchMedia('(max-width: 1023px)').matches) window.dispatchEvent(new Event('mobile-assistant-open'))
+        setOpen(value => !value)
+      }} className={`assistant-glass-trigger flex items-center gap-2 border font-medium ${reviewTarget ? 'h-8 rounded-lg px-3 text-xs' : 'h-12 rounded-full px-4 py-2.5 text-sm'}`}><Bot size={16} /> 任務助手</button>
     </div>
   )
   return reviewTarget ? createPortal(dock, reviewTarget) : dock

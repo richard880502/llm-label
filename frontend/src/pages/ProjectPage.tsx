@@ -331,7 +331,7 @@ export default function ProjectPage() {
   const goReview = (rowId: number) => navigate(`/projects/${pid}/review/${rowId}?${searchParams.toString()}`)
 
   return (
-    <div className="min-h-screen">
+    <div className="project-workspace min-h-screen">
       <header className="relative sticky top-0 z-40 backdrop-blur-2xl bg-white/45 dark:bg-black/25 border-b border-black/8 dark:border-white/8 shadow-sm shadow-black/5">
         <div className="max-w-6xl mx-auto px-6 py-2.5 flex items-center gap-2">
           <Button variant="ghost" size="sm" onClick={() => navigate('/')}

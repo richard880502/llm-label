@@ -62,6 +62,7 @@ export default function ReviewPage() {
   const [conflictWarning, setConflictWarning] = useState<string | null>(null)
   const [note, setNote] = useState('')
   const [helpOpen, setHelpOpen] = useState(false)
+  const [mobilePanel, setMobilePanel] = useState<'annotation' | 'analysis'>('annotation')
 
   const adjTotalCacheRef = useRef<{ sig: string; total: number } | null>(null)
   const [undoData, setUndoData] = useState<{
@@ -284,7 +285,7 @@ export default function ReviewPage() {
   }
 
   return (
-    <div className="review-workspace min-h-screen lg:h-dvh lg:min-h-0 lg:flex lg:flex-col lg:overflow-hidden">
+    <div data-mobile-panel={mobilePanel} className="review-workspace min-h-screen lg:h-dvh lg:min-h-0 lg:flex lg:flex-col lg:overflow-hidden">
       {savedOk && (
         <div className="fixed top-4 right-4 z-50 bg-emerald-600 text-white text-sm px-4 py-2 rounded-lg shadow-lg pointer-events-none flex items-center gap-2">
           <span>✓</span> 已儲存
@@ -330,7 +331,7 @@ export default function ReviewPage() {
               onClick={() => setHelpOpen(true)}
               className="w-7 h-7 p-0 rounded-full text-muted-foreground font-semibold text-xs"
             >?</Button>
-            <HeaderUserMenu />
+            <div className="review-user-menu"><HeaderUserMenu /></div>
           </div>
         </div>
       </header>
@@ -339,6 +340,11 @@ export default function ReviewPage() {
         <span className="mr-auto text-xs text-muted-foreground">專案工具</span>
         <div id="review-task-tools" />
         <div id="review-assistant-tools" />
+      </div>
+
+      <div className="mobile-review-tabs" aria-label="審查內容切換">
+        <button type="button" aria-pressed={mobilePanel === 'annotation'} onClick={() => setMobilePanel('annotation')}>閱讀與標注</button>
+        <button type="button" aria-pressed={mobilePanel === 'analysis'} onClick={() => setMobilePanel('analysis')}>AI 比對與備註</button>
       </div>
 
       {othersOnRow.length > 0 && (
@@ -498,7 +504,7 @@ export default function ReviewPage() {
           </Card>
           </div>
 
-          <div className="shrink-0 space-y-3 border-t border-border bg-muted/30 p-4">
+          <div className="review-actions shrink-0 space-y-3 border-t border-border bg-muted/30 p-4">
 
           {saveError && (
             <div className="bg-destructive/10 border border-destructive/20 rounded-xl px-4 py-3 text-sm text-destructive flex items-center justify-between">
