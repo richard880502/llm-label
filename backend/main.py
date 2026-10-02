@@ -149,6 +149,10 @@ if static_path.exists():
     if assets_path.exists():
         app.mount("/assets", StaticFiles(directory=str(assets_path)), name="assets")
 
+    @app.get("/favicon.svg", include_in_schema=False)
+    async def favicon():
+        return FileResponse(str(static_path / "favicon.svg"), media_type="image/svg+xml")
+
     @app.get("/{full_path:path}", include_in_schema=False)
     async def spa_fallback(full_path: str):
         return FileResponse(str(static_path / "index.html"))
