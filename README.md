@@ -20,6 +20,134 @@ v5 系列不再綁定固定的分類欄位或特定標籤集合，而是改成�
 
 啟用方式：在 llm-label 設定 `OPENCLAW_BASE_URL`、`OPENCLAW_API_TOKEN` 與 `OPENCLAW_AGENT_ID=llm-label-assistant`；並在 OpenClaw 建立同名專用 agent，禁止 `exec`、檔案系統、browser、web、memory、session 與 subagent 等宿主工具。完整環境變數見 [`.env.example`](.env.example)。
 
+## 分頁效能與深頁導覽
+
+Project 資料列表採用混合式分頁策略，兼顧一般前後翻頁、直接輸入頁碼與大型資料集的深頁跳轉。
+
+### 前後頁預抓
+
+目前頁面 `Page N` 載入完成後，前端會透過 TanStack Query 同時預抓：
+
+```text
+            Page N
+           /      \
+   prefetch N-1   prefetch N+1
+```
+
+- `N+1` 優先使用 keyset cursor，只從目前頁最後一筆之後繼續查詢。
+- `N-1` 使用一般 page-number 路徑；若後端已有可用 Page Anchor，會自動利用 anchor，否則退回 OFFSET。
+- 預抓頁面使用 `include_total=false`，避免每次翻頁重複執行 `COUNT(*)`。
+- 換頁時保留上一頁資料作為 placeholder，減少整個 table 閃回「載入中」的情況。
+
+### Keyset / Cursor Pagination
+
+後端 `GET /projects/{project_id}/rows` 支援：
+
+```text
+after_source_row_number
+after_id
+```
+
+正常順序以：
+
+```sql
+ORDER BY source_row_number, id
+```
+
+作為穩定排序，cursor 條件則使用：
+
+```sql
+WHERE (source_row_number, id) > (?, ?)
+ORDER BY source_row_number, id
+LIMIT ?
+```
+
+`id` 是必要的 tie-breaker，避免多筆資料具有相同 `source_row_number` 時產生重複或漏列。
+
+API 會回傳：
+
+```json
+{
+  "pagination_mode": "cursor",
+  "next_cursor": {
+    "source_row_number": 500,
+    "id": 12345
+  }
+}
+```
+
+直接輸入任意頁碼仍保留 OFFSET fallback，因此既有頁碼 UI 不需要改成純「上一頁／下一頁」模式。
+
+### Sparse Page Anchors
+
+為降低直接跳到很後面頁碼時的大型 OFFSET 成本，PostgreSQL 會保存稀疏的 Page Anchor。
+
+目前每 **20 頁**保存一個 checkpoint，記錄該頁第一筆資料的位置：
+
+```text
+Page 20  -> (source_row_number, id)
+Page 40  -> (source_row_number, id)
+Page 60  -> (source_row_number, id)
+...
+```
+
+例如跳到 Page 997，而且已有 Page 980 checkpoint：
+
+```text
+Page 980 anchor
+      ↓
+直接 seek 到 Page 980
+      ↓
+只處理後面 17 頁的 bounded OFFSET
+      ↓
+Page 997
+```
+
+Anchor 儲存在 `row_page_anchors`，並依以下條件隔離：
+
+- `project_id`
+- `pagination_generation`
+- filter signature
+- `page_size`
+- checkpoint page
+
+這些資料只是查詢加速 metadata；PostgreSQL 的 `rows` 仍然是唯一正式資料來源。
+
+### Anchor 失效規則
+
+`projects.pagination_generation` 用來避免資料被修改後繼續使用舊頁面位置。
+
+以下操作會在同一個 PostgreSQL transaction 內令 generation +1：
+
+- 單筆人工審查更新。
+- 批次審查／核准。
+- 一鍵套用 LLM slot 結果。
+
+舊 generation 的 anchor 會自動失效，不會被新的查詢使用。
+
+目前 sparse anchor 第一階段只套用在：
+
+```text
+relevance = all
+disagreement = all
+```
+
+`status` 與關鍵字搜尋 `q` 會納入 filter signature，因此可安全使用 anchor。
+
+`relevance` 與 `disagreement` 篩選目前仍使用 OFFSET fallback，因為背景 LLM 執行可能持續改變這兩種結果集合；這樣可以避免每一筆 LLM result 都必須更新 pagination generation。
+
+### Pagination mode
+
+Rows API 的 `pagination_mode` 可能為：
+
+| mode | 使用情境 |
+| --- | --- |
+| `cursor` | 連續往下一頁，使用 keyset cursor |
+| `anchor` | 深頁跳轉命中 sparse checkpoint |
+| `offset` | 無可用 cursor / anchor，或使用尚未支援 anchor 的 filter |
+
+這套分頁優化目前完全使用 PostgreSQL + TanStack Query，不需要額外部署 Redis。
+
 ## v5.1.0 更新重點
 
 ### AI 分類試跑流程
@@ -279,6 +407,7 @@ Platform LLM API 與 MCP Agent 現在共用相同的：
 - Relevance 規則。
 - 待審、已核准、已修正、未確定四種人工審查狀態。
 - 依狀態、相關性、模型歧異及關鍵字篩選。
+- 前後頁預抓、keyset cursor 與 PostgreSQL sparse Page Anchor，降低大型資料集翻頁與深頁跳轉成本。
 - 多人在線狀態、審查歷史與 optimistic locking。
 
 ### AI 自動分類
