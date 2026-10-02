@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useLocation } from 'react-router-dom'
 import { Bot, CheckCircle2, FlaskConical, LoaderCircle, Play, Send, Sparkles, Square, Trash2, X } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
@@ -52,6 +53,19 @@ export default function ProjectAssistantDock() {
   const projectId = projectMatch ? Number(projectMatch[1]) : null
   const rowMatch = location.pathname.match(/\/review\/(\d+)/)
   const rowIds = rowMatch ? [Number(rowMatch[1])] : []
+  const [reviewTarget, setReviewTarget] = useState<HTMLElement | null>(null)
+  useEffect(() => {
+    setOpen(false)
+    if (!rowMatch) {
+      setReviewTarget(null)
+      return
+    }
+    const attach = () => setReviewTarget(document.getElementById('review-assistant-tools'))
+    attach()
+    const observer = new MutationObserver(attach)
+    observer.observe(document.body, { childList: true, subtree: true })
+    return () => observer.disconnect()
+  }, [location.pathname])
   const [open, setOpen] = useState(false)
   const [messages, setMessages] = useState<AssistantMessage[]>([])
   const [input, setInput] = useState('')
@@ -73,6 +87,7 @@ export default function ProjectAssistantDock() {
   }, [open, messages, pendingRequests])
 
   if (!projectId || !user) return null
+  if (rowMatch && !reviewTarget) return null
 
   const clearConversation = async () => {
     if (pendingRequests > 0 || clearing || messages.length === 0) return
@@ -130,10 +145,10 @@ export default function ProjectAssistantDock() {
     }
   }
 
-  return (
-    <div className="fixed inset-x-3 bottom-3 z-[80] flex flex-col items-end gap-3 sm:inset-x-auto sm:bottom-6 sm:left-6 sm:items-start">
+  const dock = (
+    <div className={reviewTarget ? 'relative z-[80]' : 'fixed inset-x-3 bottom-3 z-[80] flex flex-col items-end gap-3 sm:inset-x-auto sm:bottom-6 sm:left-6 sm:items-start'}>
       {open && (
-        <section data-slot="card" className="flex h-[min(39rem,calc(100vh-6rem))] w-full flex-col overflow-hidden rounded-3xl border border-white/40 bg-popover/90 text-card-foreground shadow-[0_24px_80px_oklch(0.2_0.08_255/0.22)] backdrop-blur-2xl sm:w-[26rem] dark:border-white/10">
+        <section data-slot="card" className={`${reviewTarget ? 'absolute right-0 top-full mt-3' : ''} w-[min(26rem,calc(100vw-2rem))] flex h-[min(39rem,calc(100dvh-10rem))] flex-col overflow-hidden rounded-2xl border border-border bg-popover/95 text-card-foreground shadow-2xl backdrop-blur-2xl`}>
           <header className="relative flex items-center justify-between border-b border-border/70 px-4 py-3.5">
             <div className="pointer-events-none absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-primary/50 to-transparent" />
             <div className="flex items-center gap-3">
@@ -207,7 +222,8 @@ export default function ProjectAssistantDock() {
           </form>
         </section>
       )}
-      <button type="button" onClick={() => setOpen(value => !value)} className="group flex min-h-12 items-center gap-2.5 rounded-2xl border border-white/30 bg-primary px-4 py-3 text-sm font-medium text-primary-foreground shadow-[0_12px_36px_oklch(0.35_0.18_255/0.3)] transition hover:-translate-y-0.5 hover:shadow-[0_16px_42px_oklch(0.35_0.18_255/0.36)] dark:border-white/10"><Bot size={18} className="transition-transform group-hover:scale-110" /> 任務助手</button>
+      <button type="button" aria-expanded={open} onClick={() => setOpen(value => !value)} className={`assistant-glass-trigger flex items-center gap-2 border font-medium ${reviewTarget ? 'h-8 rounded-lg px-3 text-xs' : 'h-12 rounded-full px-4 py-2.5 text-sm'}`}><Bot size={16} /> 任務助手</button>
     </div>
   )
+  return reviewTarget ? createPortal(dock, reviewTarget) : dock
 }

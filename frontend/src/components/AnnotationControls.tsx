@@ -214,19 +214,21 @@ function LabelTree({
   if (children.length === 0) return null
 
   return (
-    <div className={depth > 0 ? 'ml-4 pl-3 border-l border-border space-y-2' : 'space-y-3'}>
+    <div className={`flex flex-wrap items-start gap-2 ${depth > 0 ? 'ml-2 pl-3 border-l border-border' : ''}`}>
       {children.map(label => {
         const active = selected.includes(label.id)
         const requireChild = schema.constraints.require_child_for.includes(label.id)
+        const hasChildren = schema.labels.some(child => child.parent_id === label.id)
         return (
-          <div key={label.id} className="space-y-2">
-            <div className="flex items-start gap-2">
+          <div key={label.id} className={`min-w-0 max-w-full space-y-2 ${hasChildren ? 'w-full pt-2' : label.description ? 'w-full sm:w-auto sm:max-w-64' : ''}`}>
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
                 disabled={!label.enabled}
+                aria-pressed={active}
                 onClick={() => onToggle(label.id)}
                 title={label.description || label.name}
-                className={`text-xs px-3 py-1.5 rounded-full border transition-all duration-150 ${
+                className={`max-w-full break-words text-xs px-3 py-1.5 rounded-full border transition-all duration-150 ${
                   active
                     ? 'bg-primary text-primary-foreground border-primary shadow-sm'
                     : label.enabled
@@ -236,7 +238,7 @@ function LabelTree({
               >
                 {label.name}
               </button>
-              <div className="min-w-0 pt-0.5">
+              <div className={`min-w-0 ${label.description ? 'basis-full' : ''}`}>
                 {requireChild && <Badge variant="outline" className="text-[10px] mr-1">需選子項</Badge>}
                 {!label.enabled && <Badge variant="outline" className="text-[10px]">已停用</Badge>}
                 {label.description && (
@@ -370,7 +372,7 @@ export function LLMComparison({
                 : rowHasDisagreement ? 'bg-amber-50 dark:bg-amber-900/20 ring-1 ring-amber-200 dark:ring-amber-800/40'
                 : 'bg-muted/50'
             }`}>
-              <div className="flex items-start gap-3">
+              <div className="flex flex-wrap items-start gap-2">
                 <span className="shrink-0 truncate font-medium text-muted-foreground min-w-12 max-w-32"
                   title={`結果槽 ${raw.slot}：${raw.name || `LLM ${raw.slot}`}`}>
                   {raw.name || `LLM ${raw.slot}`}
@@ -378,7 +380,7 @@ export function LLMComparison({
                 <span className="shrink-0 font-semibold min-w-10 text-foreground">
                   {relevanceDisplayName(schema, result.relevance)}
                 </span>
-                <span className="flex flex-wrap gap-1 flex-1">
+                <span className="flex flex-wrap gap-1 flex-1 min-w-0 break-words">
                   {result.labels.length === 0
                     ? <span className="text-muted-foreground/50">(無標籤)</span>
                     : result.labels.map(label => (
@@ -404,7 +406,7 @@ export function LLMComparison({
                 </button>
               </div>
               {result.reason && (
-                <div className={`pl-[88px] leading-relaxed ${isWarning ? 'text-red-600 dark:text-red-400 font-medium' : 'text-muted-foreground'}`}>
+                <div className={`leading-relaxed whitespace-pre-wrap break-words ${isWarning ? 'text-red-600 dark:text-red-400 font-medium' : 'text-muted-foreground'}`}>
                   {result.reason}
                 </div>
               )}

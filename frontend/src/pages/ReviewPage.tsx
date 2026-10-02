@@ -284,7 +284,7 @@ export default function ReviewPage() {
   }
 
   return (
-    <div className="min-h-screen pb-20">
+    <div className="review-workspace min-h-screen lg:h-dvh lg:min-h-0 lg:flex lg:flex-col lg:overflow-hidden">
       {savedOk && (
         <div className="fixed top-4 right-4 z-50 bg-emerald-600 text-white text-sm px-4 py-2 rounded-lg shadow-lg pointer-events-none flex items-center gap-2">
           <span>✓</span> 已儲存
@@ -303,7 +303,7 @@ export default function ReviewPage() {
       )}
 
       <header className="sticky top-0 z-10 backdrop-blur-2xl bg-white/45 dark:bg-black/25 border-b border-black/8 dark:border-white/8 shadow-sm shadow-black/5">
-        <div className="max-w-4xl mx-auto px-6 py-2.5 flex items-center justify-between">
+        <div className="w-full mx-auto px-3 sm:px-6 py-2.5 flex flex-wrap gap-2 items-center justify-between">
           <div className="flex items-center gap-3">
             <Button
               variant="ghost"
@@ -335,8 +335,14 @@ export default function ReviewPage() {
         </div>
       </header>
 
+      <div className="shrink-0 flex items-center justify-end gap-3 border-b border-border px-4 py-2 bg-muted/30">
+        <span className="mr-auto text-xs text-muted-foreground">專案工具</span>
+        <div id="review-task-tools" />
+        <div id="review-assistant-tools" />
+      </div>
+
       {othersOnRow.length > 0 && (
-        <div className="max-w-4xl mx-auto px-6 pt-3">
+        <div className="shrink-0 px-4 lg:px-6 pt-3">
           <div className="flex items-center gap-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/40 rounded-xl px-4 py-2.5 text-sm text-amber-700 dark:text-amber-300">
             <div className="flex -space-x-1.5 mr-1">
               {othersOnRow.map(entry => (
@@ -356,7 +362,7 @@ export default function ReviewPage() {
       )}
 
       {conflictWarning && (
-        <div className="max-w-4xl mx-auto px-6 pt-3">
+        <div className="shrink-0 px-4 lg:px-6 pt-3">
           <div className="flex items-center justify-between bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800/40 rounded-xl px-4 py-2.5 text-sm text-orange-700 dark:text-orange-300">
             <span>⚠ {conflictWarning}</span>
             <button onClick={() => setConflictWarning(null)} className="ml-4 text-orange-500 hover:text-orange-700 text-xs">關閉</button>
@@ -369,40 +375,51 @@ export default function ReviewPage() {
           {saveError || '載入中…'}
         </div>
       ) : (
-        <main className="max-w-4xl mx-auto px-6 py-6 space-y-4">
+        <main className="min-h-0 flex-1 grid grid-cols-1 lg:grid-cols-[minmax(0,3fr)_minmax(360px,2fr)] m-3 sm:m-4 lg:m-5 rounded-xl border border-border bg-card overflow-hidden">
+          <section aria-label="閱讀與分類標注" key={rid} className="review-reading min-w-0 min-h-0 lg:overflow-y-auto lg:overscroll-contain">
           {row.content && row.content !== mainText && (
             <Card>
-              <CardContent className="pt-5">
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">上下文</p>
-                <p className="text-foreground text-sm leading-relaxed whitespace-pre-wrap">{row.content}</p>
+              <CardContent>
+                <h2 className="text-base font-semibold text-foreground mb-2">上下文</h2>
+              <p className="text-foreground text-sm leading-relaxed whitespace-pre-wrap break-words">{row.content}</p>
               </CardContent>
             </Card>
           )}
 
           <Card>
-            <CardContent className="pt-5">
-              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">主要標注文字</p>
+            <CardContent>
+              <h2 className="text-base font-semibold text-foreground mb-2">主要標注文字</h2>
               {mainText
-                ? <p className="text-foreground text-sm leading-relaxed whitespace-pre-wrap">{mainText}</p>
+                ? <p className="text-foreground text-sm leading-relaxed whitespace-pre-wrap break-words">{mainText}</p>
                 : <p className="text-muted-foreground italic text-sm">（此筆無主要文字）</p>}
             </CardContent>
           </Card>
 
           <Card>
-            <CardContent className="pt-5 space-y-5">
+            <CardContent className="space-y-4">
               <div className="flex items-center justify-between gap-3">
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">分類標注</p>
+                <h2 className="text-base font-semibold text-foreground">分類標注</h2>
                 <span className="text-[11px] text-muted-foreground">Schema v{schema.version}</span>
               </div>
 
               <AnnotationFields schema={schema} result={result} onChange={setResult} />
 
+
+
+            </CardContent>
+          </Card>
+          </section>
+
+          <aside aria-label="分析比對與審查操作" className="review-analysis min-w-0 min-h-0 flex flex-col border-t lg:border-t-0 lg:border-l border-border overflow-hidden">
+          <div key={rid} className="min-h-0 lg:flex-1 lg:overflow-y-auto lg:overscroll-contain">
+          <Card>
+            <CardContent className="space-y-4">
               {predictionReason && (
                 <div>
                   <p className={`text-xs font-medium mb-1.5 ${predictionReason.startsWith('⚠️') ? 'text-red-600 dark:text-red-400' : 'text-muted-foreground'}`}>
                     {predictionReason.startsWith('⚠️') ? '⚠ 需人工判斷' : 'AI 判斷理由'}
                   </p>
-                  <p className={`text-xs rounded-lg p-3 leading-relaxed ${
+                  <p className={`text-xs rounded-lg p-3 leading-relaxed whitespace-pre-wrap break-words ${
                     predictionReason.startsWith('⚠️')
                       ? 'text-red-600 dark:text-red-400 font-medium bg-red-50 dark:bg-red-900/20 ring-1 ring-red-200 dark:ring-red-800/40'
                       : 'text-muted-foreground bg-muted/50'
@@ -412,8 +429,10 @@ export default function ReviewPage() {
                 </div>
               )}
 
-              {row.llm_results && row.llm_results.length > 0 && (
+              {row.llm_results && row.llm_results.length > 0 ? (
                 <LLMComparison results={row.llm_results} schema={schema} onAdopt={handleAdopt} />
+              ) : (
+                <p className="text-sm text-muted-foreground">此筆尚無 LLM 分析比對結果。</p>
               )}
 
               <div>
@@ -477,6 +496,9 @@ export default function ReviewPage() {
               )}
             </CardContent>
           </Card>
+          </div>
+
+          <div className="shrink-0 space-y-3 border-t border-border bg-muted/30 p-4">
 
           {saveError && (
             <div className="bg-destructive/10 border border-destructive/20 rounded-xl px-4 py-3 text-sm text-destructive flex items-center justify-between">
@@ -485,30 +507,32 @@ export default function ReviewPage() {
             </div>
           )}
 
-          <div className="flex gap-3">
+          <div className="grid grid-cols-3 gap-2">
             <Button
               onClick={() => save('approved')}
               disabled={saving || validationIssues.length > 0}
-              className="flex-1 h-12 text-base bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl"
+              className="h-11 px-2 text-sm bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg"
             >
               ✓ 核准 <span className="text-emerald-200 text-xs ml-1">[A]</span>
             </Button>
             <Button
               onClick={() => save('corrected')}
               disabled={saving || validationIssues.length > 0}
-              className="flex-1 h-12 text-base rounded-xl"
+              className="h-11 px-2 text-sm rounded-lg"
             >
               ✎ 儲存修正 <span className="text-primary-foreground/50 text-xs ml-1">[S]</span>
             </Button>
             <Button
               onClick={() => save('uncertain')}
               disabled={saving || validationIssues.length > 0}
-              className="flex-1 h-12 text-base rounded-xl bg-orange-500 text-white hover:bg-orange-600 dark:bg-orange-500 dark:hover:bg-orange-600 shadow-sm"
+              className="h-11 px-2 text-sm rounded-lg bg-orange-500 text-white hover:bg-orange-600 dark:bg-orange-500 dark:hover:bg-orange-600 shadow-sm"
             >
               ? 未確定 <span className="text-orange-100 text-xs ml-1">[U]</span>
             </Button>
           </div>
           <p className="text-center text-xs text-muted-foreground">快捷鍵：← → 切換筆數　A 核准　S 儲存修正　U 未確定</p>
+          </div>
+          </aside>
         </main>
       )}
 

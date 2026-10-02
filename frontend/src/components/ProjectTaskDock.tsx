@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useLocation } from 'react-router-dom'
 import { api, Task } from '../api/client'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -38,6 +39,12 @@ function collapsedSummary(active: Task[]): string {
 }
 
 export default function ProjectTaskDock({ projectId }: { projectId: number }) {
+  const location = useLocation()
+  const [reviewTarget, setReviewTarget] = useState<HTMLElement | null>(null)
+  useEffect(() => {
+    setReviewTarget(location.pathname.includes('/review/') ? document.getElementById('review-task-tools') : null)
+    setExpanded(false)
+  }, [location.pathname])
   const [tasks, setTasks] = useState<Task[]>([])
   const [expanded, setExpanded] = useState(false)
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -109,10 +116,10 @@ export default function ProjectTaskDock({ projectId }: { projectId: number }) {
   if (typeof document === 'undefined' || dialogOpen || tasks.length === 0) return null
 
   return createPortal(
-    <div className="fixed bottom-6 right-6 z-[70] flex flex-col items-end gap-2">
+    <div className={reviewTarget ? 'relative z-[70]' : 'fixed bottom-6 right-6 z-[70] flex flex-col items-end gap-2'}>
       {expanded && (
-        <div className="mb-1 w-[min(23rem,calc(100vw-3rem))] overflow-hidden rounded-2xl border border-border bg-popover/95 shadow-2xl backdrop-blur-xl">
-          <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
+        <div className={`${reviewTarget ? 'absolute right-0 top-full mt-3' : 'mb-1'} flex h-[min(39rem,calc(100dvh-10rem))] w-[min(26rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl border border-border bg-popover/95 shadow-2xl backdrop-blur-2xl`}>
+          <div className="shrink-0 flex items-center justify-between gap-3 border-b border-border px-4 py-3">
             <div>
               <div className="flex items-center gap-2">
                 <p className="text-sm font-semibold">任務紀錄</p>
@@ -125,7 +132,7 @@ export default function ProjectTaskDock({ projectId }: { projectId: number }) {
             <Button variant="ghost" size="xs" onClick={() => setExpanded(false)}>收起</Button>
           </div>
 
-          <div className="max-h-[24rem] space-y-2 overflow-y-auto p-3">
+          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
             {visible.map(task => {
               const isActive = ACTIVE_STATUSES.has(task.status)
               const pct = progress(task)
@@ -181,8 +188,9 @@ export default function ProjectTaskDock({ projectId }: { projectId: number }) {
       <button
         type="button"
         aria-live="polite"
+        aria-expanded={expanded}
         onClick={() => setExpanded(value => !value)}
-        className={`relative flex min-h-11 items-center gap-2 rounded-full border bg-popover/95 px-4 py-2.5 text-sm font-medium shadow-xl backdrop-blur-xl transition hover:bg-accent ${
+        className={`relative flex items-center gap-2 border bg-popover/95 font-medium transition hover:bg-accent ${reviewTarget ? 'h-8 rounded-lg px-3 text-xs' : 'h-12 rounded-full px-4 py-2.5 text-sm shadow-xl backdrop-blur-xl'} ${
           active.length > 0 ? 'border-primary/40 ring-2 ring-primary/10' : 'border-border'
         }`}
       >
@@ -195,6 +203,6 @@ export default function ProjectTaskDock({ projectId }: { projectId: number }) {
         <span className="text-xs text-muted-foreground">{expanded ? '▼' : '▲'}</span>
       </button>
     </div>,
-    document.body,
+    reviewTarget || document.body,
   )
 }
