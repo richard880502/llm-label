@@ -12,6 +12,7 @@ from ..auth import CurrentUser, get_current_user, require_scope
 from ..database import get_db
 from ..llm.classifier import compatibility_projection
 from ..pagination import (
+    PAGE_ANCHOR_INTERVAL,
     bump_pagination_generation,
     find_page_anchor,
     get_pagination_generation,
@@ -152,14 +153,14 @@ def list_rows(
                 )
                 if anchor:
                     query_where = (
-                        f"{query_where} AND (r.source_row_number, r.id) > (?, ?)"
+                        f"{query_where} AND (r.source_row_number, r.id) >= (?, ?)"
                     )
                     query_params += [
                         anchor["cursor_source_row_number"],
                         anchor["cursor_id"],
                     ]
                     anchor_page = anchor["page"]
-                    offset = max(0, (page - anchor_page - 1) * page_size)
+                    offset = max(0, (page - anchor_page) * page_size)
                     pagination_mode = "anchor"
                 else:
                     offset = (page - 1) * page_size
@@ -209,11 +210,16 @@ def list_rows(
                     "id": last["id"],
                 }
 
+        # Persist only sparse checkpoints to avoid turning every list read into a
+        # PostgreSQL write. A checkpoint stores the first row of the page so the
+        # same deep page can be revisited directly.
+        first_item = items[0] if items else None
         if (
             anchor_supported
             and filter_hash is not None
-            and next_cursor is not None
-            and page >= 1
+            and first_item is not None
+            and first_item["source_row_number"] is not None
+            and page % PAGE_ANCHOR_INTERVAL == 0
         ):
             save_page_anchor(
                 conn,
@@ -222,8 +228,8 @@ def list_rows(
                 filter_hash=filter_hash,
                 page_size=page_size,
                 page=page,
-                cursor_source_row_number=next_cursor["source_row_number"],
-                cursor_id=next_cursor["id"],
+                cursor_source_row_number=first_item["source_row_number"],
+                cursor_id=first_item["id"],
             )
             conn.commit()
 
