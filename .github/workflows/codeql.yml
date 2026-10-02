@@ -6,6 +6,7 @@ on:
       - main
       - ci/**
       - feature/**
+      - style/**
   pull_request:
     branches:
       - main
