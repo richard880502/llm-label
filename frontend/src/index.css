@@ -62,25 +62,25 @@
 
 .dark {
   color-scheme: dark;
-  --background: oklch(0.1 0.015 255);
-  --foreground: oklch(0.96 0.005 255);
-  --card: oklch(1 0 0 / 0.06);
+  --background: oklch(0.17 0.008 255);
+  --foreground: oklch(0.93 0.008 255);
+  --card: oklch(0.23 0.01 255 / 0.9);
   --card-foreground: oklch(0.96 0.005 255);
-  --popover: oklch(0.12 0.02 255 / 0.85);
+  --popover: oklch(0.26 0.012 255 / 0.97);
   --popover-foreground: oklch(0.96 0.005 255);
-  --primary: oklch(0.65 0.2 255);
-  --primary-foreground: oklch(0.1 0.01 255);
-  --secondary: oklch(1 0 0 / 0.07);
+  --primary: oklch(0.72 0.15 255);
+  --primary-foreground: oklch(0.18 0.025 255);
+  --secondary: oklch(0.29 0.012 255);
   --secondary-foreground: oklch(0.96 0.005 255);
-  --muted: oklch(1 0 0 / 0.07);
-  --muted-foreground: oklch(0.6 0.018 255);
-  --accent: oklch(1 0 0 / 0.07);
+  --muted: oklch(0.28 0.01 255);
+  --muted-foreground: oklch(0.72 0.014 255);
+  --accent: oklch(0.32 0.018 255);
   --accent-foreground: oklch(0.96 0.005 255);
   --destructive: oklch(0.7 0.19 22);
   --destructive-foreground: oklch(0.96 0 0);
-  --border: oklch(1 0 0 / 0.1);
-  --input: oklch(1 0 0 / 0.09);
-  --ring: oklch(0.6 0.18 255);
+  --border: oklch(1 0 0 / 0.12);
+  --input: oklch(1 0 0 / 0.15);
+  --ring: oklch(0.72 0.15 255);
 }
 
 /* ── Gradient mesh background (fixed so glass elements blur over it) ── */
@@ -97,10 +97,8 @@ html {
 
 html.dark {
   background:
-    radial-gradient(ellipse at 12% 40%, oklch(0.2 0.04 240 / 0.7) 0, transparent 60%),
-    radial-gradient(ellipse at 88% 10%, oklch(0.17 0.035 215 / 0.55) 0, transparent 55%),
-    radial-gradient(ellipse at 55% 92%, oklch(0.16 0.03 200 / 0.45) 0, transparent 55%),
-    oklch(0.1 0.008 250);
+    radial-gradient(ellipse at 85% 0%, oklch(0.28 0.025 255 / 0.4) 0, transparent 55%),
+    linear-gradient(160deg, oklch(0.19 0.008 255), oklch(0.15 0.006 255));
   background-attachment: fixed;
 }
 
@@ -122,10 +120,11 @@ body {
 }
 
 html.dark [data-slot="card"] {
+  backdrop-filter: blur(20px) saturate(110%);
+  -webkit-backdrop-filter: blur(20px) saturate(110%);
   box-shadow:
-    0 0 0 1px oklch(1 0 0 / 0.08),
-    inset 0 1px 0 oklch(1 0 0 / 0.06),
-    0 4px 24px oklch(0 0 0 / 0.35);
+    inset 0 1px 0 oklch(1 0 0 / 0.045),
+    0 8px 28px oklch(0 0 0 / 0.2);
 }
 
 [data-slot="dialog-content"] {
@@ -164,10 +163,21 @@ html.dark [data-slot="card"] {
 }
 
 html.dark [data-slot="dialog-content"] {
+  backdrop-filter: blur(32px) saturate(110%);
+  -webkit-backdrop-filter: blur(32px) saturate(110%);
   box-shadow:
     0 0 0 1px oklch(1 0 0 / 0.08),
     inset 0 1px 0 oklch(1 0 0 / 0.05),
     0 24px 64px oklch(0 0 0 / 0.55);
+}
+
+html.dark ::selection {
+  background: oklch(0.72 0.15 255 / 0.3);
+  color: var(--foreground);
+}
+
+html.dark {
+  scrollbar-color: oklch(0.4 0.01 255) transparent;
 }
 
 [data-slot="select-content"],
