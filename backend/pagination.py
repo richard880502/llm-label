@@ -126,6 +126,6 @@ def save_page_anchor(
         ),
     )
     conn.execute(
-        "DELETE FROM row_page_anchors WHERE project_id=? AND generation<>?",
+        "DELETE FROM row_page_anchors WHERE project_id=? AND generation<?",
         (project_id, generation),
     )
