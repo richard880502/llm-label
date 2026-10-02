@@ -10,6 +10,27 @@ def ensure_annotation_schema_columns() -> None:
     mapping_json = json.dumps(fresh_legacy_input_mapping().model_dump(mode="json"), ensure_ascii=False)
 
     with get_db() as conn:
+        conn.execute(
+            "ALTER TABLE projects ADD COLUMN IF NOT EXISTS pagination_generation BIGINT NOT NULL DEFAULT 0"
+        )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS row_page_anchors (
+                   project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                   generation BIGINT NOT NULL,
+                   filter_hash TEXT NOT NULL,
+                   page_size INTEGER NOT NULL,
+                   page INTEGER NOT NULL,
+                   cursor_source_row_number INTEGER NOT NULL,
+                   cursor_id INTEGER NOT NULL,
+                   created_at TEXT DEFAULT to_char(CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Taipei', 'YYYY-MM-DD HH24:MI:SS'),
+                   PRIMARY KEY(project_id, generation, filter_hash, page_size, page)
+               )"""
+        )
+        conn.execute(
+            """CREATE INDEX IF NOT EXISTS idx_row_page_anchors_lookup
+               ON row_page_anchors(project_id, generation, filter_hash, page_size, page DESC)"""
+        )
+
         conn.execute("ALTER TABLE projects ADD COLUMN IF NOT EXISTS input_mapping JSONB")
         conn.execute("ALTER TABLE projects ADD COLUMN IF NOT EXISTS label_schema JSONB")
         conn.execute(
