@@ -81,7 +81,8 @@ export interface RowsResponse {
   total: number | null
   page: number
   page_size: number
-  pagination_mode: 'offset' | 'cursor'
+  pagination_mode: 'offset' | 'cursor' | 'anchor'
+  anchor_page: number | null
   next_cursor: RowCursor | null
   items: RowSummary[]
 }
