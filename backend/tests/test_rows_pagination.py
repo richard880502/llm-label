@@ -234,3 +234,109 @@ def test_adjacent_rows_uses_id_as_tiebreaker_and_respects_filters(project_factor
     assert result["next_id"] == ids_by_source[11][0]
     assert result["position"] == 2
     assert result["total"] == 3
+
+
+def test_cursor_page_matches_offset_page_and_uses_stable_tiebreaker(project_factory):
+    project_id = project_factory(
+        [
+            {"source_row_number": 1, "comment_content": "a"},
+            {"source_row_number": 2, "comment_content": "b"},
+            {"source_row_number": 2, "comment_content": "c"},
+            {"source_row_number": 3, "comment_content": "d"},
+            {"source_row_number": 4, "comment_content": "e"},
+            {"source_row_number": 5, "comment_content": "f"},
+        ]
+    )
+
+    first = list_rows(project_id, page=1, page_size=3)
+    cursor = first["next_cursor"]
+    assert cursor is not None
+
+    cursor_page = list_rows(
+        project_id,
+        page=2,
+        page_size=3,
+        include_total=False,
+        after_source_row_number=cursor["source_row_number"],
+        after_id=cursor["id"],
+    )
+    offset_page = list_rows(project_id, page=2, page_size=3, include_total=False)
+
+    assert cursor_page["pagination_mode"] == "cursor"
+    assert [item["id"] for item in cursor_page["items"]] == [
+        item["id"] for item in offset_page["items"]
+    ]
+    assert [item["source_row_number"] for item in cursor_page["items"]] == [3, 4, 5]
+
+
+def test_cursor_respects_filters(project_factory):
+    project_id = project_factory(
+        [
+            {
+                "source_row_number": i,
+                "status": "pending" if i % 2 == 0 else "approved",
+                "ai_relevance": "相關" if i % 4 in (0, 2) else "無關",
+                "comment_content": f"row {i}",
+            }
+            for i in range(1, 21)
+        ]
+    )
+
+    first = list_rows(
+        project_id,
+        page=1,
+        page_size=3,
+        status="pending",
+        relevance="相關",
+    )
+    cursor = first["next_cursor"]
+    assert cursor is not None
+
+    second = list_rows(
+        project_id,
+        page=2,
+        page_size=3,
+        status="pending",
+        relevance="相關",
+        include_total=False,
+        after_source_row_number=cursor["source_row_number"],
+        after_id=cursor["id"],
+    )
+
+    assert second["pagination_mode"] == "cursor"
+    assert [item["source_row_number"] for item in second["items"]] == [8, 10, 12]
+    assert all(item["status"] == "pending" for item in second["items"])
+
+
+def test_partial_cursor_is_rejected(project_factory):
+    project_id = project_factory(
+        [{"source_row_number": i} for i in range(1, 4)]
+    )
+
+    with pytest.raises(Exception) as exc_info:
+        list_rows(
+            project_id,
+            page=2,
+            page_size=2,
+            after_source_row_number=2,
+        )
+
+    assert getattr(exc_info.value, "status_code", None) == 400
+
+
+def test_disagreement_first_keeps_offset_fallback(project_factory):
+    project_id = project_factory(
+        [{"source_row_number": i} for i in range(1, 5)]
+    )
+
+    result = list_rows(
+        project_id,
+        page=1,
+        page_size=2,
+        disagreement="first",
+        after_source_row_number=2,
+        after_id=999999,
+    )
+
+    assert result["pagination_mode"] == "offset"
+    assert result["next_cursor"] is None
