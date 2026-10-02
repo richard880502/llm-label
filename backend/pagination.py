@@ -4,7 +4,7 @@ import json
 from .database import DatabaseConnection
 
 
-ANCHOR_SORT_VERSION = 2
+ANCHOR_SORT_VERSION = 3
 PAGE_ANCHOR_INTERVAL = 20
 
 
@@ -16,8 +16,8 @@ def supports_page_anchors(
 
     Initial rollout intentionally excludes relevance/disagreement modes because LLM
     results may change those result sets in the background. Status/q filters are safe
-    because review mutations bump the project pagination generation in the same DB
-    transaction.
+    because membership changes bump the affected status generations in the same DB
+    transaction. Unfiltered anchors survive review-only edits.
     """
 
     relevance_value = (relevance or "all").strip()
@@ -49,12 +49,34 @@ def pagination_filter_hash(
     return hashlib.sha256(encoded).hexdigest()
 
 
-def get_pagination_generation(conn: DatabaseConnection, project_id: int) -> int:
+def get_pagination_generation(conn: DatabaseConnection, project_id: int, status: str | None = None) -> int:
     row = conn.execute(
-        "SELECT pagination_generation FROM projects WHERE id=?",
+        "SELECT pagination_generation, pagination_status_generations FROM projects WHERE id=?",
         (project_id,),
     ).fetchone()
-    return int(row["pagination_generation"] or 0) if row else 0
+    if not row:
+        return 0
+    versions = row["pagination_status_generations"] or {}
+    return int(row["pagination_generation"] or 0) + int(versions.get(status or "all", 0))
+
+
+def invalidate_status_transitions(conn: DatabaseConnection, project_id: int, old_statuses, new_status: str) -> None:
+    """Advance only memberships that changed, in the review transaction."""
+    affected = {status for status in old_statuses if status != new_status}
+    if not affected:
+        return
+    affected.add(new_status)
+    # Lock the project to serialize concurrent reviewers' counter increments.
+    row = conn.execute(
+        "SELECT pagination_status_generations FROM projects WHERE id=? FOR UPDATE", (project_id,)
+    ).fetchone()
+    versions = dict(row["pagination_status_generations"] or {})
+    for status in affected:
+        versions[status] = int(versions.get(status, 0)) + 1
+    conn.execute(
+        "UPDATE projects SET pagination_status_generations=?::jsonb WHERE id=?",
+        (json.dumps(versions), project_id),
+    )
 
 
 def bump_pagination_generation(conn: DatabaseConnection, project_id: int) -> None:
@@ -126,6 +148,6 @@ def save_page_anchor(
         ),
     )
     conn.execute(
-        "DELETE FROM row_page_anchors WHERE project_id=? AND generation<?",
-        (project_id, generation),
+        "DELETE FROM row_page_anchors WHERE project_id=? AND filter_hash=? AND generation<?",
+        (project_id, filter_hash, generation),
     )

@@ -10,6 +10,7 @@ def ensure_annotation_schema_columns() -> None:
     mapping_json = json.dumps(fresh_legacy_input_mapping().model_dump(mode="json"), ensure_ascii=False)
 
     with get_db() as conn:
+        conn.execute("ALTER TABLE projects ADD COLUMN IF NOT EXISTS pagination_status_generations JSONB NOT NULL DEFAULT '{}'::jsonb")
         conn.execute(
             "ALTER TABLE projects ADD COLUMN IF NOT EXISTS pagination_generation BIGINT NOT NULL DEFAULT 0"
         )
