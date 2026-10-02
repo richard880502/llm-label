@@ -4,7 +4,8 @@ import json
 from .database import DatabaseConnection
 
 
-ANCHOR_SORT_VERSION = 1
+ANCHOR_SORT_VERSION = 2
+PAGE_ANCHOR_INTERVAL = 20
 
 
 def supports_page_anchors(
@@ -83,7 +84,7 @@ def find_page_anchor(
              AND generation=?
              AND filter_hash=?
              AND page_size=?
-             AND page < ?
+             AND page <= ?
            ORDER BY page DESC
            LIMIT 1""",
         (project_id, generation, filter_hash, page_size, target_page),
@@ -102,7 +103,7 @@ def save_page_anchor(
     cursor_source_row_number: int,
     cursor_id: int,
 ) -> None:
-    """Persist an end-of-page cursor and opportunistically prune stale generations."""
+    """Persist a page-start cursor and opportunistically prune stale generations."""
 
     conn.execute(
         """INSERT INTO row_page_anchors
