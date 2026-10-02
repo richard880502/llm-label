@@ -1,10 +1,24 @@
 # Annotation App
 
-**目前版本：v5.1.0**
+**目前版本：v5.2.0**
 
 多人協作的通用資料標注、AI 自動分類與人工複查平台。前端使用 React/Vite，後端使用 FastAPI，正式資料儲存在 PostgreSQL。
 
 v5 系列不再綁定固定的分類欄位或特定標籤集合，而是改成以 **Input Mapping + Annotation Schema + Codebook + Shared Prompt** 描述每個專案的資料與分類規則。
+
+## v5.2.0 更新重點
+
+### OpenClaw 專案任務助手
+
+每個專案現在都有可保留對話紀錄的浮動任務助手。它讀取網站提供的專案進度、最近任務、目前資料列與可用 LLM slots，協助使用者規劃及推進分類工作。
+
+- 回覆支援 Markdown、清單、表格、程式碼與連結；同一時間可傳送多則訊息，不必等待前一則回覆。
+- 對話以 `project_id + username` 隔離；不同帳號或不同專案不會共用 OpenClaw response chain，也可由使用者清除自己的專案對話重新開始。
+- 助手只能提出受驗證的 `create_task` 與 `cancel_task` 操作。有效操作會由 llm-label 後端自動執行，並把執行結果或錯誤寫回對話紀錄。
+- 建立分類任務時，真正執行的是網站已設定的 Platform LLM API、Shared Prompt、Codebook、Annotation Schema 與 few-shot；OpenClaw 不會直接使用 GPU、檔案系統或 MCP 工具替平台分類。
+- OpenClaw 必須使用專用的 `llm-label-assistant` agent。平台會拒絕指向通用 `main` agent 的設定，並在每次請求注入工具邊界，避免 agent 把自身容器或 workspace 誤認為平台資源。
+
+啟用方式：在 llm-label 設定 `OPENCLAW_BASE_URL`、`OPENCLAW_API_TOKEN` 與 `OPENCLAW_AGENT_ID=llm-label-assistant`；並在 OpenClaw 建立同名專用 agent，禁止 `exec`、檔案系統、browser、web、memory、session 與 subagent 等宿主工具。完整環境變數見 [`.env.example`](.env.example)。
 
 ## v5.1.0 更新重點
 
@@ -444,6 +458,7 @@ docker compose exec -T db \
 
 ## 版本歷程
 
+- `v5.2.0`：新增 OpenClaw 專案任務助手、Markdown 對話、每位使用者／專案的獨立對話與清除功能；採用受限專用 agent，並由平台後端自動驗證及執行建立／停止分類任務。
 - `v5.1.0`：新增隨機 20 筆試跑、固定樣本重試、換一批、結果檢查與接續剩餘資料；新增 task-level 結果快照並簡化自動分類介面。
 - `v5.0.3`：新增「只重跑解析失敗」資料範圍，依結果 slot 精準重跑 JSON / Schema 解析錯誤；API / MCP 共用相同 target，並以 `task_items` snapshot 接續 v5.0.2 durable recovery 行為。
 - `v5.0.2`：API 分類任務改為 PostgreSQL durable checkpoints，支援瀏覽器關閉後持續執行、App/container restart 自動恢復、watchdog/lease recovery；LLM HTTP path 改為真正可達 100 並發的專用 executor、共享 connection pool、全域 in-flight guard 與 transient error retry/backoff。
