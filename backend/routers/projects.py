@@ -19,6 +19,7 @@ except ImportError:
 from ..auth import CurrentUser, get_current_user
 from ..database import get_db
 from ..llm.prompt_policy import get_shared_prompt_template, set_shared_prompt_template
+from ..pagination import bump_pagination_generation
 
 router = APIRouter()
 
@@ -525,6 +526,7 @@ def adopt_slot(project_id: int, body: AdoptSlotBody, _: CurrentUser = Depends(ge
                    WHERE id=?""",
                 params,
             )
+            bump_pagination_generation(conn, project_id)
         updated = len(params)
         conn.commit()
     return {"updated": updated}
