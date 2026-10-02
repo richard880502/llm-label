@@ -453,6 +453,7 @@ SCHEMA_STATEMENTS = [
         project_id           INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
         username             TEXT NOT NULL REFERENCES users(username) ON DELETE CASCADE,
         openclaw_response_id TEXT,
+        context_version      INTEGER NOT NULL DEFAULT 2,
         created_at           TEXT NOT NULL DEFAULT to_char(CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Taipei', 'YYYY-MM-DD HH24:MI:SS'),
         updated_at           TEXT NOT NULL DEFAULT to_char(CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Taipei', 'YYYY-MM-DD HH24:MI:SS'),
         UNIQUE(project_id, username)
@@ -504,6 +505,9 @@ def init_db(*, seed_admin: bool = True) -> None:
         conn.execute("ALTER TABLE assistant_messages ADD COLUMN IF NOT EXISTS action_json TEXT")
         conn.execute("ALTER TABLE assistant_messages ADD COLUMN IF NOT EXISTS action_status TEXT")
         conn.execute("ALTER TABLE assistant_messages ADD COLUMN IF NOT EXISTS action_result TEXT")
+        # A new assistant protocol must not inherit an older OpenClaw response
+        # chain, whose instructions may describe a different execution model.
+        conn.execute("ALTER TABLE assistant_conversations ADD COLUMN IF NOT EXISTS context_version INTEGER NOT NULL DEFAULT 1")
         _fix_pipe_labels(conn)
         if seed_admin:
             _ensure_admin(conn)

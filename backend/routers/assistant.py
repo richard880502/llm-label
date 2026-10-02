@@ -12,6 +12,7 @@ from . import tasks as tasks_router
 
 
 router = APIRouter()
+ASSISTANT_CONTEXT_VERSION = 2
 
 
 class AssistantMessageRequest(BaseModel):
@@ -184,6 +185,11 @@ def create_message(
         raise HTTPException(400, "Message cannot be empty")
     with get_db() as conn:
         conversation = _conversation(conn, project_id, user.username)
+        previous_response_id = (
+            conversation["openclaw_response_id"]
+            if conversation["context_version"] == ASSISTANT_CONTEXT_VERSION
+            else None
+        )
         project = conn.execute(
             "SELECT assistant_auto_execute FROM projects WHERE id=?", (project_id,)
         ).fetchone()
@@ -201,10 +207,12 @@ def create_message(
 你是資料標注平台的專案任務助手。你要協助使用者規劃、檢查與推進分類任務，回答要簡潔、具體、可執行。
 角色與執行方式：
 - 你是任務控制助手，不是實際執行資料分類的模型。不要自行判定整批資料，也不要要求使用者提供 API key。
+- 不要掃描、列舉或判斷你所在容器的檔案、模型、GPU、節點、Ollama 或 CLI 工具；那些不是 llm-label 平台資源，也不能用來判斷任務是否可執行。
+- 不要宣稱你已經「實際掃描系統」、找不到模型／資料檔，或沒有 create_task 工具。這些資訊與任務執行無關。
 - llm-label 網站已有自己的 LLM API 設定。專案資料中的 llm_slots 就是網站可用的 LLM 槽位，包含名稱、模型與 configured 狀態。
 - create_task 輸出後，llm-label 後端會立刻以 execution_mode=api 呼叫該 slot 在網站設定的 API，套用網站的 Prompt、Codebook、Schema 與 few-shot 範例完成判定。
 - 只能對 configured=1 的槽位提出 create_task。若沒有已設定槽位，請引導使用者先到網站的 LLM 設定完成 API URL、金鑰與模型設定。
-- 回覆提到執行者時，應明確說「網站設定的 LLM API（LLM N／槽位名稱）」；不可說由 OpenClaw 自己分類，也不可說這是 MCP 任務。
+- 回覆提到執行者時，應明確說「網站設定的 LLM API（LLM N／槽位名稱）」；不可說由 OpenClaw 自己分類，也不可說這是 MCP 任務。若使用者要求建立或停止任務且資料足夠，直接輸出 assistant_action，不要提供 A/B/C 替代方案。
 你可以針對以下兩種操作提出一次一個可自動執行的操作，但不可聲稱已經執行：
 - 建立分類任務：create_task，參數 target(pending/all/parse_failed)、slot(1-3)、run_kind(trial/full)、sample_size(僅 trial，1-50)。沒有明確要求完整執行時，優先提出 trial 並使用 10 筆。
 - 停止任務：cancel_task，參數 task_id，且只能選擇目前進行中的任務。
@@ -218,10 +226,10 @@ def create_message(
 """.strip()
     try:
         reply, response_id = send_to_openclaw(
-            conversation_key=f"llm-label:{project_id}:{user.username}",
+            conversation_key=f"llm-label:v{ASSISTANT_CONTEXT_VERSION}:{project_id}:{user.username}",
             message=message,
             instructions=instructions,
-            previous_response_id=conversation["openclaw_response_id"],
+            previous_response_id=previous_response_id,
         )
     except OpenClawError as error:
         raise HTTPException(502, str(error)) from error
@@ -237,8 +245,8 @@ def create_message(
         ).lastrowid
         conn.execute(
             """UPDATE assistant_conversations
-                  SET openclaw_response_id=?, updated_at=datetime('now', 'localtime') WHERE id=?""",
-            (response_id, conversation["id"]),
+                  SET openclaw_response_id=?, context_version=?, updated_at=datetime('now', 'localtime') WHERE id=?""",
+            (response_id, ASSISTANT_CONTEXT_VERSION, conversation["id"]),
         )
         result = conn.execute(
             """SELECT id, role, content, source, action_json, action_status, action_result, created_at
