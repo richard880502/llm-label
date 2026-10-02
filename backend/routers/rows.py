@@ -13,7 +13,7 @@ from ..database import get_db
 from ..llm.classifier import compatibility_projection
 from ..pagination import (
     PAGE_ANCHOR_INTERVAL,
-    bump_pagination_generation,
+    invalidate_status_transitions,
     find_page_anchor,
     get_pagination_generation,
     pagination_filter_hash,
@@ -136,7 +136,7 @@ def list_rows(
             if include_total
             else None
         )
-        generation = get_pagination_generation(conn, project_id) if anchor_supported else 0
+        generation = get_pagination_generation(conn, project_id, status) if anchor_supported else 0
 
         if use_cursor:
             query_where = f"{query_where} AND (r.source_row_number, r.id) > (?, ?)"
@@ -402,6 +402,10 @@ def batch_update_rows(
             return {"updated": 0}
 
         placeholders = ",".join("?" * len(row_ids))
+        old_rows = conn.execute(
+            f"SELECT status FROM rows WHERE id IN ({placeholders}) AND project_id=? FOR UPDATE",
+            row_ids + [project_id],
+        ).fetchall()
         cursor = conn.execute(
             f"UPDATE rows SET status=?, reviewer_id=?, reviewed_at=datetime('now','localtime'), version=COALESCE(version,0)+1 "
             f"WHERE id IN ({placeholders}) AND project_id=?",
@@ -413,7 +417,7 @@ def batch_update_rows(
         )
         updated = cursor.rowcount
         if updated:
-            bump_pagination_generation(conn, project_id)
+            invalidate_status_transitions(conn, project_id, [row["status"] for row in old_rows], body.status)
         conn.commit()
     return {"updated": updated}
 
@@ -445,7 +449,7 @@ def update_row(
 
     with get_db() as conn:
         row = conn.execute(
-            "SELECT * FROM rows WHERE id=? AND project_id=?", (row_id, project_id)
+            "SELECT * FROM rows WHERE id=? AND project_id=? FOR UPDATE", (row_id, project_id)
         ).fetchone()
         if not row:
             raise HTTPException(404, "Row not found")
@@ -533,7 +537,8 @@ def update_row(
                     audit_labels,
                 ),
             )
-            bump_pagination_generation(conn, project_id)
+            if body.status is not None:
+                invalidate_status_transitions(conn, project_id, [row["status"]], body.status)
             conn.commit()
 
         updated = conn.execute("SELECT * FROM rows WHERE id=?", (row_id,)).fetchone()

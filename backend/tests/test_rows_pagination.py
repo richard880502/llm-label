@@ -397,10 +397,33 @@ def test_page_anchor_generation_invalidates_after_review_mutation(project_factor
 
     jumped = list_rows(project_id, page=25, page_size=10, include_total=False)
 
-    assert after == before + 1
-    assert jumped["pagination_mode"] == "offset"
-    assert jumped["anchor_page"] is None
+    assert after == before
+    assert jumped["pagination_mode"] == "anchor"
+    assert jumped["anchor_page"] == 20
     assert [item["source_row_number"] for item in jumped["items"]] == list(range(241, 251))
+
+
+def test_status_transition_invalidates_only_affected_lists(project_factory):
+    project_id = project_factory(
+        [{"source_row_number": i, "status": "pending"} for i in range(1, 301)]
+        + [{"source_row_number": i, "status": "corrected"} for i in range(301, 601)]
+    )
+    ids = _row_ids_by_source(project_id)
+    list_rows(project_id, page=20, page_size=10, status="pending")
+    list_rows(project_id, page=20, page_size=10, status="corrected")
+    batch_update_rows(project_id, BatchUpdate(ids=[ids[1][0]], status="approved"), CurrentUser("pagination-test-user", "admin"))
+    pending = list_rows(project_id, page=25, page_size=10, status="pending")
+    corrected = list_rows(project_id, page=25, page_size=10, status="corrected")
+    assert pending["pagination_mode"] == "offset"
+    assert [r["source_row_number"] for r in pending["items"]] == list(range(242, 252))
+    assert corrected["pagination_mode"] == "anchor"
+    assert [r["source_row_number"] for r in corrected["items"]] == list(range(541, 551))
+    # Writing a checkpoint in the changed list must not prune the unchanged list.
+    list_rows(project_id, page=20, page_size=10, status="pending")
+    assert list_rows(project_id, page=25, page_size=10, status="corrected")["pagination_mode"] == "anchor"
+    # Re-saving the same status does not change membership or invalidate anchors.
+    batch_update_rows(project_id, BatchUpdate(ids=[ids[2][0]], status="pending"), CurrentUser("pagination-test-user", "admin"))
+    assert list_rows(project_id, page=25, page_size=10, status="pending")["pagination_mode"] == "anchor"
 
 
 def test_page_anchors_are_disabled_for_relevance_filters(project_factory):

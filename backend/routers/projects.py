@@ -19,7 +19,7 @@ except ImportError:
 from ..auth import CurrentUser, get_current_user
 from ..database import get_db
 from ..llm.prompt_policy import get_shared_prompt_template, set_shared_prompt_template
-from ..pagination import bump_pagination_generation
+from ..pagination import invalidate_status_transitions
 
 router = APIRouter()
 
@@ -511,10 +511,10 @@ def adopt_slot(project_id: int, body: AdoptSlotBody, _: CurrentUser = Depends(ge
     with get_db() as conn:
         extra = "AND r.status = 'pending'" if body.target == "pending" else ""
         results = conn.execute(
-            f"""SELECT rlr.row_id, rlr.relevance, rlr.labels, rlr.subtypes
+            f"""SELECT rlr.row_id, rlr.relevance, rlr.labels, rlr.subtypes, r.status
                 FROM row_llm_results rlr
                 JOIN rows r ON r.id = rlr.row_id
-                WHERE rlr.slot = ? AND r.project_id = ? {extra}""",
+                WHERE rlr.slot = ? AND r.project_id = ? {extra} FOR UPDATE OF r""",
             (body.slot, project_id),
         ).fetchall()
         params = [(r["relevance"], r["labels"], r["subtypes"], r["row_id"]) for r in results]
@@ -526,7 +526,7 @@ def adopt_slot(project_id: int, body: AdoptSlotBody, _: CurrentUser = Depends(ge
                    WHERE id=?""",
                 params,
             )
-            bump_pagination_generation(conn, project_id)
+            invalidate_status_transitions(conn, project_id, [r["status"] for r in results], "corrected")
         updated = len(params)
         conn.commit()
     return {"updated": updated}
