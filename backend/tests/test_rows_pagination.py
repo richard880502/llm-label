@@ -354,14 +354,19 @@ def test_deep_jump_reuses_nearest_page_anchor(project_factory):
         [{"source_row_number": i, "comment_content": f"row {i}"} for i in range(1, 401)]
     )
 
-    anchor_source = list_rows(project_id, page=10, page_size=10)
+    anchor_source = list_rows(project_id, page=20, page_size=10)
     assert anchor_source["pagination_mode"] == "offset"
 
-    jumped = list_rows(project_id, page=15, page_size=10, include_total=False)
+    jumped = list_rows(project_id, page=25, page_size=10, include_total=False)
 
     assert jumped["pagination_mode"] == "anchor"
-    assert jumped["anchor_page"] == 10
-    assert [item["source_row_number"] for item in jumped["items"]] == list(range(141, 151))
+    assert jumped["anchor_page"] == 20
+    assert [item["source_row_number"] for item in jumped["items"]] == list(range(241, 251))
+
+    repeated_checkpoint = list_rows(project_id, page=20, page_size=10, include_total=False)
+    assert repeated_checkpoint["pagination_mode"] == "anchor"
+    assert repeated_checkpoint["anchor_page"] == 20
+    assert [item["source_row_number"] for item in repeated_checkpoint["items"]] == list(range(191, 201))
 
 
 def test_page_anchor_generation_invalidates_after_review_mutation(project_factory):
@@ -370,7 +375,7 @@ def test_page_anchor_generation_invalidates_after_review_mutation(project_factor
     )
     ids = _row_ids_by_source(project_id)
 
-    list_rows(project_id, page=10, page_size=10)
+    list_rows(project_id, page=20, page_size=10)
 
     with get_db() as conn:
         before = conn.execute(
@@ -390,12 +395,12 @@ def test_page_anchor_generation_invalidates_after_review_mutation(project_factor
             (project_id,),
         ).fetchone()["pagination_generation"]
 
-    jumped = list_rows(project_id, page=15, page_size=10, include_total=False)
+    jumped = list_rows(project_id, page=25, page_size=10, include_total=False)
 
     assert after == before + 1
     assert jumped["pagination_mode"] == "offset"
     assert jumped["anchor_page"] is None
-    assert [item["source_row_number"] for item in jumped["items"]] == list(range(141, 151))
+    assert [item["source_row_number"] for item in jumped["items"]] == list(range(241, 251))
 
 
 def test_page_anchors_are_disabled_for_relevance_filters(project_factory):
@@ -412,13 +417,13 @@ def test_page_anchors_are_disabled_for_relevance_filters(project_factory):
 
     first_jump = list_rows(
         project_id,
-        page=10,
+        page=20,
         page_size=10,
         relevance="相關",
     )
     second_jump = list_rows(
         project_id,
-        page=15,
+        page=25,
         page_size=10,
         relevance="相關",
         include_total=False,
@@ -441,7 +446,7 @@ def test_anchor_rows_are_namespaced_by_filter_signature(project_factory):
         ]
     )
 
-    list_rows(project_id, page=10, page_size=10, status="pending")
+    list_rows(project_id, page=20, page_size=10, status="pending")
     approved = list_rows(
         project_id,
         page=5,
