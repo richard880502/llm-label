@@ -49,9 +49,15 @@ def list_rows(
     q: Optional[str] = None,
     disagreement: Optional[str] = None,
     include_total: bool = True,
+    after_source_row_number: Optional[int] = None,
+    after_id: Optional[int] = None,
 ):
     conditions = ["r.project_id = ?"]
     params: list = [project_id]
+
+    cursor_requested = after_source_row_number is not None or after_id is not None
+    if cursor_requested and (after_source_row_number is None or after_id is None):
+        raise HTTPException(400, "Both after_source_row_number and after_id are required")
 
     if status and status != "all":
         conditions.append("r.status = ?")
@@ -79,7 +85,28 @@ def list_rows(
                        SELECT 1 FROM row_llm_results rlr
                        WHERE rlr.row_id = r.id AND rlr.reason LIKE '⚠️%'
                    ) THEN 1 ELSE 0 END"""
-    order = f"{disagreement_expr} DESC, r.source_row_number ASC" if disagreement == "first" else "r.source_row_number ASC"
+    order = (
+        f"{disagreement_expr} DESC, r.source_row_number ASC, r.id ASC"
+        if disagreement == "first"
+        else "r.source_row_number ASC, r.id ASC"
+    )
+
+    # disagreement=first sorts by a derived flag before source order, so the simple
+    # (source_row_number, id) cursor is not sufficient for that mode. Keep OFFSET
+    # as the compatibility fallback there until a composite disagreement cursor is
+    # introduced.
+    use_cursor = (
+        cursor_requested
+        and disagreement != "first"
+        and after_source_row_number is not None
+        and after_id is not None
+    )
+
+    query_where = where
+    query_params = list(params)
+    if use_cursor:
+        query_where = f"{query_where} AND (r.source_row_number, r.id) > (?, ?)"
+        query_params += [after_source_row_number, after_id]
 
     with get_db() as conn:
         total = (
@@ -87,27 +114,56 @@ def list_rows(
             if include_total
             else None
         )
-        offset = (page - 1) * page_size
-        rows_db = conn.execute(
-            f"""SELECT r.id, r.source_row_number, r.text, r.comment_content, r.content,
-                       r.prediction, r.corrected_result,
-                       r.ai_relevance, r.ai_labels, r.ai_emotional_subtypes,
-                       r.corrected_relevance, r.corrected_labels, r.corrected_emotional_subtypes,
-                       r.status, r.reviewed_at, r.llm_updated_at, u.username AS reviewer_username,
-                       {disagreement_expr} AS llm_disagreement,
-                       {parse_failed_expr} AS llm_parse_failed
-                FROM rows r
-                LEFT JOIN users u ON u.id = r.reviewer_id
-                WHERE {where}
-                ORDER BY {order}
-                LIMIT ? OFFSET ?""",
-            params + [page_size, offset],
-        ).fetchall()
+        if use_cursor:
+            rows_db = conn.execute(
+                f"""SELECT r.id, r.source_row_number, r.text, r.comment_content, r.content,
+                           r.prediction, r.corrected_result,
+                           r.ai_relevance, r.ai_labels, r.ai_emotional_subtypes,
+                           r.corrected_relevance, r.corrected_labels, r.corrected_emotional_subtypes,
+                           r.status, r.reviewed_at, r.llm_updated_at, u.username AS reviewer_username,
+                           {disagreement_expr} AS llm_disagreement,
+                           {parse_failed_expr} AS llm_parse_failed
+                    FROM rows r
+                    LEFT JOIN users u ON u.id = r.reviewer_id
+                    WHERE {query_where}
+                    ORDER BY {order}
+                    LIMIT ?""",
+                query_params + [page_size],
+            ).fetchall()
+        else:
+            offset = (page - 1) * page_size
+            rows_db = conn.execute(
+                f"""SELECT r.id, r.source_row_number, r.text, r.comment_content, r.content,
+                           r.prediction, r.corrected_result,
+                           r.ai_relevance, r.ai_labels, r.ai_emotional_subtypes,
+                           r.corrected_relevance, r.corrected_labels, r.corrected_emotional_subtypes,
+                           r.status, r.reviewed_at, r.llm_updated_at, u.username AS reviewer_username,
+                           {disagreement_expr} AS llm_disagreement,
+                           {parse_failed_expr} AS llm_parse_failed
+                    FROM rows r
+                    LEFT JOIN users u ON u.id = r.reviewer_id
+                    WHERE {query_where}
+                    ORDER BY {order}
+                    LIMIT ? OFFSET ?""",
+                query_params + [page_size, offset],
+            ).fetchall()
+
+    items = [dict(r) for r in rows_db]
+    next_cursor = None
+    if items and disagreement != "first":
+        last = items[-1]
+        next_cursor = {
+            "source_row_number": last["source_row_number"],
+            "id": last["id"],
+        }
+
     return {
         "total": total,
         "page": page,
         "page_size": page_size,
-        "items": [dict(r) for r in rows_db],
+        "pagination_mode": "cursor" if use_cursor else "offset",
+        "next_cursor": next_cursor,
+        "items": items,
     }
 
 
