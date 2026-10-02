@@ -225,7 +225,7 @@ export default function ProjectPage() {
   useEffect(() => {
     if (
       isPlaceholderData ||
-      !rowsData?.next_cursor ||
+      !rowsData ||
       page >= totalPages
     ) return
 
@@ -247,8 +247,10 @@ export default function ProjectPage() {
           q,
           disagreement,
           include_total: false,
-          after_source_row_number: cursor.source_row_number,
-          after_id: cursor.id,
+          ...(cursor ? {
+            after_source_row_number: cursor.source_row_number,
+            after_id: cursor.id,
+          } : {}),
         })
         return { ...res, total: res.total ?? cachedTotal }
       },
