@@ -223,11 +223,7 @@ export default function ProjectPage() {
   const totalPages = Math.ceil(total / PAGE_SIZE)
 
   useEffect(() => {
-    if (
-      isPlaceholderData ||
-      !rowsData ||
-      page >= totalPages
-    ) return
+    if (isPlaceholderData || !rowsData) return
 
     const cursor = rowsData.next_cursor
     const cachedTotal = (
@@ -236,26 +232,47 @@ export default function ProjectPage() {
         : rowsData.total ?? 0
     )
 
-    void queryClient.prefetchQuery({
-      queryKey: rowsQueryKey(page + 1),
-      queryFn: async () => {
-        const res = await api.listRows(pid, {
-          page: page + 1,
-          page_size: PAGE_SIZE,
-          status,
-          relevance,
-          q,
-          disagreement,
-          include_total: false,
-          ...(cursor ? {
-            after_source_row_number: cursor.source_row_number,
-            after_id: cursor.id,
-          } : {}),
-        })
-        return { ...res, total: res.total ?? cachedTotal }
-      },
-      staleTime: 15_000,
-    })
+    if (page > 1) {
+      void queryClient.prefetchQuery({
+        queryKey: rowsQueryKey(page - 1),
+        queryFn: async () => {
+          const res = await api.listRows(pid, {
+            page: page - 1,
+            page_size: PAGE_SIZE,
+            status,
+            relevance,
+            q,
+            disagreement,
+            include_total: false,
+          })
+          return { ...res, total: res.total ?? cachedTotal }
+        },
+        staleTime: 15_000,
+      })
+    }
+
+    if (page < totalPages) {
+      void queryClient.prefetchQuery({
+        queryKey: rowsQueryKey(page + 1),
+        queryFn: async () => {
+          const res = await api.listRows(pid, {
+            page: page + 1,
+            page_size: PAGE_SIZE,
+            status,
+            relevance,
+            q,
+            disagreement,
+            include_total: false,
+            ...(cursor ? {
+              after_source_row_number: cursor.source_row_number,
+              after_id: cursor.id,
+            } : {}),
+          })
+          return { ...res, total: res.total ?? cachedTotal }
+        },
+        staleTime: 15_000,
+      })
+    }
   }, [
     disagreement,
     filterSignature,
