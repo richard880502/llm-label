@@ -9,6 +9,7 @@ import ProjectSettingsPage from './pages/ProjectSettingsPage'
 import ReviewPage from './pages/ReviewPage'
 import UsersPage from './pages/UsersPage'
 import OAuthAuthorizePage from './pages/OAuthAuthorizePage'
+import ProjectAssistantDock from './components/ProjectAssistantDock'
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth()
@@ -29,15 +30,18 @@ function RequireAdmin({ children }: { children: ReactNode }) {
 
 function AppRoutes() {
   return (
-    <Routes>
-      <Route path="/login" element={<LoginPage />} />
-      <Route path="/oauth/authorize" element={<OAuthAuthorizePage />} />
-      <Route path="/" element={<RequireAuth><HomePage /></RequireAuth>} />
-      <Route path="/projects/:projectId" element={<RequireAuth><ProjectPage /></RequireAuth>} />
-      <Route path="/projects/:projectId/settings" element={<RequireAuth><ProjectSettingsPage /></RequireAuth>} />
-      <Route path="/projects/:projectId/review/:rowId" element={<RequireAuth><ReviewPage /></RequireAuth>} />
-      <Route path="/users" element={<RequireAuth><RequireAdmin><UsersPage /></RequireAdmin></RequireAuth>} />
-    </Routes>
+    <>
+      <Routes>
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="/oauth/authorize" element={<OAuthAuthorizePage />} />
+        <Route path="/" element={<RequireAuth><HomePage /></RequireAuth>} />
+        <Route path="/projects/:projectId" element={<RequireAuth><ProjectPage /></RequireAuth>} />
+        <Route path="/projects/:projectId/settings" element={<RequireAuth><ProjectSettingsPage /></RequireAuth>} />
+        <Route path="/projects/:projectId/review/:rowId" element={<RequireAuth><ReviewPage /></RequireAuth>} />
+        <Route path="/users" element={<RequireAuth><RequireAdmin><UsersPage /></RequireAdmin></RequireAuth>} />
+      </Routes>
+      <ProjectAssistantDock />
+    </>
   )
 }
 

@@ -55,6 +55,7 @@ class SubmitBatchRequest(BaseModel):
 
 def _eligible_rows(conn, project_id: int, target: str, slot: int, sample_size: int | None = None, exclude_task_id: int | None = None, random_sample: bool = False):
     """Return the frozen row scope for a newly created labeling task."""
+    order_by = "random()" if random_sample else "r.source_row_number, r.id"
     if target == "parse_failed":
         exclusion = " AND NOT EXISTS (SELECT 1 FROM task_items excluded WHERE excluded.task_id=? AND excluded.row_id=r.id AND excluded.status='done')" if exclude_task_id else ""
         params = (slot, project_id, exclude_task_id) if exclude_task_id else (slot, project_id)
@@ -63,7 +64,7 @@ def _eligible_rows(conn, project_id: int, target: str, slot: int, sample_size: i
                FROM rows r
                JOIN row_llm_results rlr ON rlr.row_id=r.id AND rlr.slot=?
                WHERE r.project_id=? AND rlr.reason LIKE '⚠️%'{exclusion}
-               ORDER BY {"random()" if random_sample else "r.source_row_number, r.id"}""",
+               ORDER BY {order_by}""",
             params,
         ).fetchall()
         return rows[:sample_size] if sample_size else rows
@@ -76,7 +77,7 @@ def _eligible_rows(conn, project_id: int, target: str, slot: int, sample_size: i
     exclusion = " AND NOT EXISTS (SELECT 1 FROM task_items excluded WHERE excluded.task_id=? AND excluded.row_id=r.id AND excluded.status='done')" if exclude_task_id else ""
     params = (project_id, exclude_task_id) if exclude_task_id else (project_id,)
     rows = conn.execute(
-        f"SELECT r.id FROM rows r WHERE r.project_id=? AND {status_filter}{exclusion} ORDER BY {"random()" if random_sample else "r.source_row_number, r.id"}",
+        f"SELECT r.id FROM rows r WHERE r.project_id=? AND {status_filter}{exclusion} ORDER BY {order_by}",
         params,
     ).fetchall()
     return rows[:sample_size] if sample_size else rows

@@ -8,6 +8,7 @@ on:
     branches:
       - main
       - ci/**
+      - feature/**
   workflow_dispatch:
 
 concurrency:
