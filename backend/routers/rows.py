@@ -11,6 +11,15 @@ from ..annotation.schema_service import SchemaValidationError
 from ..auth import CurrentUser, get_current_user, require_scope
 from ..database import get_db
 from ..llm.classifier import compatibility_projection
+from ..pagination import (
+    PAGE_ANCHOR_INTERVAL,
+    bump_pagination_generation,
+    find_page_anchor,
+    get_pagination_generation,
+    pagination_filter_hash,
+    save_page_anchor,
+    supports_page_anchors,
+)
 
 router = APIRouter()
 
@@ -49,15 +58,24 @@ def list_rows(
     q: Optional[str] = None,
     disagreement: Optional[str] = None,
     include_total: bool = True,
+    after_source_row_number: Optional[int] = None,
+    after_id: Optional[int] = None,
 ):
     conditions = ["r.project_id = ?"]
     params: list = [project_id]
+
+    cursor_requested = after_source_row_number is not None or after_id is not None
+    if cursor_requested and (after_source_row_number is None or after_id is None):
+        raise HTTPException(400, "Both after_source_row_number and after_id are required")
 
     if status and status != "all":
         conditions.append("r.status = ?")
         params.append(status)
     if relevance and relevance != "all":
-        conditions.append("(r.corrected_relevance = ? OR (r.corrected_relevance IS NULL AND r.ai_relevance = ?))")
+        conditions.append(
+            "(r.corrected_relevance = ? OR "
+            "(r.corrected_relevance IS NULL AND r.ai_relevance = ?))"
+        )
         params += [relevance, relevance]
     if q:
         conditions.append("(r.comment_content LIKE ? OR r.content LIKE ? OR r.text LIKE ?)")
@@ -79,7 +97,38 @@ def list_rows(
                        SELECT 1 FROM row_llm_results rlr
                        WHERE rlr.row_id = r.id AND rlr.reason LIKE '⚠️%'
                    ) THEN 1 ELSE 0 END"""
-    order = f"{disagreement_expr} DESC, r.source_row_number ASC" if disagreement == "first" else "r.source_row_number ASC"
+    order = (
+        f"{disagreement_expr} DESC, r.source_row_number ASC, r.id ASC"
+        if disagreement == "first"
+        else "r.source_row_number ASC, r.id ASC"
+    )
+
+    # Cursor pagination is used for sequential navigation. Sparse page anchors are
+    # only enabled for filter modes whose membership/order cannot change from
+    # background LLM writes in the initial rollout.
+    use_cursor = (
+        cursor_requested
+        and disagreement != "first"
+        and after_source_row_number is not None
+        and after_id is not None
+    )
+    anchor_supported = supports_page_anchors(relevance, disagreement)
+    filter_hash = (
+        pagination_filter_hash(
+            status=status,
+            relevance=relevance,
+            q=q,
+            disagreement=disagreement,
+        )
+        if anchor_supported
+        else None
+    )
+
+    query_where = where
+    query_params = list(params)
+    pagination_mode = "cursor" if use_cursor else "offset"
+    anchor_page = None
+    offset = 0
 
     with get_db() as conn:
         total = (
@@ -87,27 +136,111 @@ def list_rows(
             if include_total
             else None
         )
-        offset = (page - 1) * page_size
-        rows_db = conn.execute(
-            f"""SELECT r.id, r.source_row_number, r.text, r.comment_content, r.content,
-                       r.prediction, r.corrected_result,
-                       r.ai_relevance, r.ai_labels, r.ai_emotional_subtypes,
-                       r.corrected_relevance, r.corrected_labels, r.corrected_emotional_subtypes,
-                       r.status, r.reviewed_at, r.llm_updated_at, u.username AS reviewer_username,
-                       {disagreement_expr} AS llm_disagreement,
-                       {parse_failed_expr} AS llm_parse_failed
-                FROM rows r
-                LEFT JOIN users u ON u.id = r.reviewer_id
-                WHERE {where}
-                ORDER BY {order}
-                LIMIT ? OFFSET ?""",
-            params + [page_size, offset],
-        ).fetchall()
+        generation = get_pagination_generation(conn, project_id) if anchor_supported else 0
+
+        if use_cursor:
+            query_where = f"{query_where} AND (r.source_row_number, r.id) > (?, ?)"
+            query_params += [after_source_row_number, after_id]
+        else:
+            if page > 1 and anchor_supported and filter_hash is not None:
+                anchor = find_page_anchor(
+                    conn,
+                    project_id=project_id,
+                    generation=generation,
+                    filter_hash=filter_hash,
+                    page_size=page_size,
+                    target_page=page,
+                )
+                if anchor:
+                    query_where = (
+                        f"{query_where} AND (r.source_row_number, r.id) >= (?, ?)"
+                    )
+                    query_params += [
+                        anchor["cursor_source_row_number"],
+                        anchor["cursor_id"],
+                    ]
+                    anchor_page = anchor["page"]
+                    offset = max(0, (page - anchor_page) * page_size)
+                    pagination_mode = "anchor"
+                else:
+                    offset = (page - 1) * page_size
+            else:
+                offset = (page - 1) * page_size
+
+        if use_cursor:
+            rows_db = conn.execute(
+                f"""SELECT r.id, r.source_row_number, r.text, r.comment_content, r.content,
+                           r.prediction, r.corrected_result,
+                           r.ai_relevance, r.ai_labels, r.ai_emotional_subtypes,
+                           r.corrected_relevance, r.corrected_labels, r.corrected_emotional_subtypes,
+                           r.status, r.reviewed_at, r.llm_updated_at, u.username AS reviewer_username,
+                           {disagreement_expr} AS llm_disagreement,
+                           {parse_failed_expr} AS llm_parse_failed
+                    FROM rows r
+                    LEFT JOIN users u ON u.id = r.reviewer_id
+                    WHERE {query_where}
+                    ORDER BY {order}
+                    LIMIT ?""",
+                query_params + [page_size],
+            ).fetchall()
+        else:
+            rows_db = conn.execute(
+                f"""SELECT r.id, r.source_row_number, r.text, r.comment_content, r.content,
+                           r.prediction, r.corrected_result,
+                           r.ai_relevance, r.ai_labels, r.ai_emotional_subtypes,
+                           r.corrected_relevance, r.corrected_labels, r.corrected_emotional_subtypes,
+                           r.status, r.reviewed_at, r.llm_updated_at, u.username AS reviewer_username,
+                           {disagreement_expr} AS llm_disagreement,
+                           {parse_failed_expr} AS llm_parse_failed
+                    FROM rows r
+                    LEFT JOIN users u ON u.id = r.reviewer_id
+                    WHERE {query_where}
+                    ORDER BY {order}
+                    LIMIT ? OFFSET ?""",
+                query_params + [page_size, offset],
+            ).fetchall()
+
+        items = [dict(r) for r in rows_db]
+        next_cursor = None
+        if items and disagreement != "first":
+            last = items[-1]
+            if last["source_row_number"] is not None:
+                next_cursor = {
+                    "source_row_number": last["source_row_number"],
+                    "id": last["id"],
+                }
+
+        # Persist only sparse checkpoints to avoid turning every list read into a
+        # PostgreSQL write. A checkpoint stores the first row of the page so the
+        # same deep page can be revisited directly.
+        first_item = items[0] if items else None
+        if (
+            anchor_supported
+            and filter_hash is not None
+            and first_item is not None
+            and first_item["source_row_number"] is not None
+            and page % PAGE_ANCHOR_INTERVAL == 0
+        ):
+            save_page_anchor(
+                conn,
+                project_id=project_id,
+                generation=generation,
+                filter_hash=filter_hash,
+                page_size=page_size,
+                page=page,
+                cursor_source_row_number=first_item["source_row_number"],
+                cursor_id=first_item["id"],
+            )
+            conn.commit()
+
     return {
         "total": total,
         "page": page,
         "page_size": page_size,
-        "items": [dict(r) for r in rows_db],
+        "pagination_mode": pagination_mode,
+        "anchor_page": anchor_page,
+        "next_cursor": next_cursor,
+        "items": items,
     }
 
 
@@ -278,8 +411,10 @@ def batch_update_rows(
             "INSERT INTO audit_log (project_id, row_id, username, status) VALUES (?, ?, ?, ?)",
             [(project_id, rid, current_user.username, body.status) for rid in row_ids],
         )
-        conn.commit()
         updated = cursor.rowcount
+        if updated:
+            bump_pagination_generation(conn, project_id)
+        conn.commit()
     return {"updated": updated}
 
 
@@ -398,6 +533,7 @@ def update_row(
                     audit_labels,
                 ),
             )
+            bump_pagination_generation(conn, project_id)
             conn.commit()
 
         updated = conn.execute("SELECT * FROM rows WHERE id=?", (row_id,)).fetchone()

@@ -72,8 +72,19 @@ export interface RowDetail extends RowSummary {
   llm_results: LLMResult[]; version: number
 }
 
+export interface RowCursor {
+  source_row_number: number
+  id: number
+}
+
 export interface RowsResponse {
-  total: number | null; page: number; page_size: number; items: RowSummary[]
+  total: number | null
+  page: number
+  page_size: number
+  pagination_mode: 'offset' | 'cursor' | 'anchor'
+  anchor_page: number | null
+  next_cursor: RowCursor | null
+  items: RowSummary[]
 }
 
 export interface Adjacent {
