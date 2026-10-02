@@ -203,9 +203,11 @@ export default function ProjectPage() {
   })
 
   const filterSignature = `${status}|${relevance}|${q}|${disagreement}`
+  const rowsQueryKey = (targetPage: number) =>
+    ['rows', pid, targetPage, status, relevance, q, disagreement] as const
 
-  const { data: rowsData, isLoading: loading } = useQuery({
-    queryKey: ['rows', pid, page, status, relevance, q, disagreement],
+  const { data: rowsData, isLoading: loading, isPlaceholderData } = useQuery({
+    queryKey: rowsQueryKey(page),
     queryFn: async () => {
       const needsTotal = totalCacheRef.current?.sig !== filterSignature
       const res = await api.listRows(pid, {
@@ -214,9 +216,57 @@ export default function ProjectPage() {
       if (res.total !== null) totalCacheRef.current = { sig: filterSignature, total: res.total }
       return { ...res, total: res.total ?? totalCacheRef.current?.total ?? 0 }
     },
+    placeholderData: previousData => previousData,
   })
   const rows = rowsData?.items ?? []
   const total = rowsData?.total ?? 0
+  const totalPages = Math.ceil(total / PAGE_SIZE)
+
+  useEffect(() => {
+    if (
+      isPlaceholderData ||
+      !rowsData?.next_cursor ||
+      page >= totalPages
+    ) return
+
+    const cursor = rowsData.next_cursor
+    const cachedTotal = (
+      totalCacheRef.current?.sig === filterSignature
+        ? totalCacheRef.current.total
+        : rowsData.total ?? 0
+    )
+
+    void queryClient.prefetchQuery({
+      queryKey: rowsQueryKey(page + 1),
+      queryFn: async () => {
+        const res = await api.listRows(pid, {
+          page: page + 1,
+          page_size: PAGE_SIZE,
+          status,
+          relevance,
+          q,
+          disagreement,
+          include_total: false,
+          after_source_row_number: cursor.source_row_number,
+          after_id: cursor.id,
+        })
+        return { ...res, total: res.total ?? cachedTotal }
+      },
+      staleTime: 15_000,
+    })
+  }, [
+    disagreement,
+    filterSignature,
+    isPlaceholderData,
+    page,
+    pid,
+    q,
+    queryClient,
+    relevance,
+    rowsData,
+    status,
+    totalPages,
+  ])
 
   useEffect(() => { setSelectedIds(new Set()) }, [rows])
 
@@ -259,7 +309,6 @@ export default function ProjectPage() {
     }
   }
 
-  const totalPages = Math.ceil(total / PAGE_SIZE)
   const goReview = (rowId: number) => navigate(`/projects/${pid}/review/${rowId}?${searchParams.toString()}`)
 
   return (
