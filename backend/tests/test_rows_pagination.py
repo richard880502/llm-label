@@ -3,8 +3,14 @@ import uuid
 import psycopg
 import pytest
 
+from backend.auth import CurrentUser
 from backend.database import _get_pool, get_db
-from backend.routers.rows import adjacent_rows, list_rows
+from backend.routers.rows import (
+    BatchUpdate,
+    adjacent_rows,
+    batch_update_rows,
+    list_rows,
+)
 
 
 def _pool_reachable() -> bool:
@@ -340,3 +346,110 @@ def test_disagreement_first_keeps_offset_fallback(project_factory):
 
     assert result["pagination_mode"] == "offset"
     assert result["next_cursor"] is None
+
+
+
+def test_deep_jump_reuses_nearest_page_anchor(project_factory):
+    project_id = project_factory(
+        [{"source_row_number": i, "comment_content": f"row {i}"} for i in range(1, 401)]
+    )
+
+    anchor_source = list_rows(project_id, page=10, page_size=10)
+    assert anchor_source["pagination_mode"] == "offset"
+
+    jumped = list_rows(project_id, page=15, page_size=10, include_total=False)
+
+    assert jumped["pagination_mode"] == "anchor"
+    assert jumped["anchor_page"] == 10
+    assert [item["source_row_number"] for item in jumped["items"]] == list(range(141, 151))
+
+
+def test_page_anchor_generation_invalidates_after_review_mutation(project_factory):
+    project_id = project_factory(
+        [{"source_row_number": i, "comment_content": f"row {i}"} for i in range(1, 301)]
+    )
+    ids = _row_ids_by_source(project_id)
+
+    list_rows(project_id, page=10, page_size=10)
+
+    with get_db() as conn:
+        before = conn.execute(
+            "SELECT pagination_generation FROM projects WHERE id=?",
+            (project_id,),
+        ).fetchone()["pagination_generation"]
+
+    batch_update_rows(
+        project_id,
+        BatchUpdate(ids=[ids[1][0]], status="approved"),
+        CurrentUser("pagination-test-user", "admin"),
+    )
+
+    with get_db() as conn:
+        after = conn.execute(
+            "SELECT pagination_generation FROM projects WHERE id=?",
+            (project_id,),
+        ).fetchone()["pagination_generation"]
+
+    jumped = list_rows(project_id, page=15, page_size=10, include_total=False)
+
+    assert after == before + 1
+    assert jumped["pagination_mode"] == "offset"
+    assert jumped["anchor_page"] is None
+    assert [item["source_row_number"] for item in jumped["items"]] == list(range(141, 151))
+
+
+def test_page_anchors_are_disabled_for_relevance_filters(project_factory):
+    project_id = project_factory(
+        [
+            {
+                "source_row_number": i,
+                "ai_relevance": "相關",
+                "comment_content": f"row {i}",
+            }
+            for i in range(1, 301)
+        ]
+    )
+
+    first_jump = list_rows(
+        project_id,
+        page=10,
+        page_size=10,
+        relevance="相關",
+    )
+    second_jump = list_rows(
+        project_id,
+        page=15,
+        page_size=10,
+        relevance="相關",
+        include_total=False,
+    )
+
+    assert first_jump["pagination_mode"] == "offset"
+    assert second_jump["pagination_mode"] == "offset"
+    assert second_jump["anchor_page"] is None
+
+
+def test_anchor_rows_are_namespaced_by_filter_signature(project_factory):
+    project_id = project_factory(
+        [
+            {
+                "source_row_number": i,
+                "status": "pending" if i <= 200 else "approved",
+                "comment_content": f"row {i}",
+            }
+            for i in range(1, 301)
+        ]
+    )
+
+    list_rows(project_id, page=10, page_size=10, status="pending")
+    approved = list_rows(
+        project_id,
+        page=5,
+        page_size=10,
+        status="approved",
+        include_total=False,
+    )
+
+    assert approved["pagination_mode"] == "offset"
+    assert approved["anchor_page"] is None
+    assert [item["source_row_number"] for item in approved["items"]] == list(range(241, 251))
