@@ -3,8 +3,10 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, LLMSlotConfig } from '../api/client'
 import HeaderUserMenu from '../components/HeaderUserMenu'
+import ProjectNav from '../components/ProjectNav'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import LLMSettingsModal from '../components/LLMSettingsModal'
-import { Button } from '@/components/ui/button'
+import { Button, buttonVariants } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -332,57 +334,37 @@ export default function ProjectPage() {
 
   return (
     <div className="project-workspace min-h-screen">
-      <header className="relative sticky top-0 z-40 backdrop-blur-2xl bg-white/45 dark:bg-black/25 border-b border-black/8 dark:border-white/8 shadow-sm shadow-black/5">
-        <div className="max-w-6xl mx-auto px-6 py-2.5 flex items-center gap-2">
+      <header className="sticky top-0 z-40 backdrop-blur-2xl bg-white/45 dark:bg-black/25 border-b border-black/8 dark:border-white/8 shadow-sm shadow-black/5">
+        <div className="max-w-6xl mx-auto px-6 pt-2.5 flex items-center gap-2">
           <Button variant="ghost" size="sm" onClick={() => navigate('/')}
-            className="text-muted-foreground shrink-0 px-2">← 返回</Button>
+            className="text-muted-foreground shrink-0 px-2">← 專案</Button>
           <span className="text-border">／</span>
           <h1 className="text-sm font-semibold text-foreground truncate flex-1 min-w-0">{project?.name || '載入中…'}</h1>
-
-          {project && (
-            <div className="hidden sm:flex items-center gap-3 text-xs text-muted-foreground shrink-0 mr-1">
-              <span className="text-emerald-600 dark:text-emerald-400 font-medium">✓ {project.approved || 0}</span>
-              <span className="text-primary font-medium">✎ {project.corrected || 0}</span>
-              <span className="text-orange-600 dark:text-orange-400 font-semibold">? {project.uncertain || 0}</span>
-              <span>⏳ {project.pending ?? project.total_rows}</span>
-              <span className="text-border">·</span>
-              <span>{project.total_rows} 筆</span>
-            </div>
-          )}
-
-          {project && (
-            <div className="flex items-center gap-1.5 shrink-0">
-              <Button variant="outline" size="sm"
-                onClick={() => api.exportProject(pid, `${project.name}.xlsx`).catch(e => alert(e.message))}>
-                匯出
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => navigate(`/projects/${pid}/tendency`)}>
-                標注傾向
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => setAdoptOpen(true)}
-                className="border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20">
-                一鍵套用
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => setLlmOpen(true)}
-                className="border-violet-200 dark:border-violet-800 text-violet-700 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-900/20">
-                ⚙ 自動分類{activeTasks.length > 0 ? ` · ${activeTasks.length}` : ''}
-              </Button>
-            </div>
-          )}
           <HeaderUserMenu />
         </div>
-        {project && project.total_rows > 0 && (
-          <div className="absolute bottom-0 left-0 right-0 h-0.5 overflow-hidden">
-            <div className="h-full flex">
-              <div className="h-full bg-emerald-500 transition-all duration-700"
-                style={{ width: `${(project.approved || 0) / project.total_rows * 100}%` }} />
-              <div className="h-full bg-primary transition-all duration-700"
-                style={{ width: `${(project.corrected || 0) / project.total_rows * 100}%` }} />
-              <div className="h-full bg-orange-500 transition-all duration-700"
-                style={{ width: `${(project.uncertain || 0) / project.total_rows * 100}%` }} />
-            </div>
-          </div>
-        )}
+        <ProjectNav projectId={pid} actions={project && (
+          <>
+            <Button variant="outline" size="sm" onClick={() => setAdoptOpen(true)}>
+              一鍵套用
+            </Button>
+            <Button size="sm" onClick={() => setLlmOpen(true)}>
+              ⚙ 自動分類{activeTasks.length > 0 ? ` · 執行中 ${activeTasks.length}` : ''}
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                aria-label="更多動作"
+                className={buttonVariants({ variant: 'outline', size: 'icon-sm' })}>
+                ⋯
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-40">
+                <DropdownMenuItem
+                  onClick={() => api.exportProject(pid, `${project.name}.xlsx`).catch(e => alert(e.message))}>
+                  匯出 Excel
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </>
+        )} />
       </header>
 
       <main className="max-w-6xl mx-auto px-6 py-5">
@@ -419,11 +401,11 @@ export default function ProjectPage() {
           <Select value={disagreement} onValueChange={val => setFilter('disagreement', val ?? 'all')}>
             <SelectTrigger className="w-28">
               <SelectValue placeholder="歧異">
-                {({'all':'所有狀態','first':'歧異優先','only':'只看歧異'} as Record<string,string>)[disagreement]}
+                {({'all':'不限歧異','first':'歧異優先','only':'只看歧異'} as Record<string,string>)[disagreement]}
               </SelectValue>
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">所有狀態</SelectItem>
+              <SelectItem value="all">不限歧異</SelectItem>
               <SelectItem value="first">歧異優先</SelectItem>
               <SelectItem value="only">只看歧異</SelectItem>
             </SelectContent>

@@ -4,6 +4,8 @@ import { useQuery } from '@tanstack/react-query'
 import { getProjectSchema, getTendency, type TendencyReport } from '../api/annotation'
 import { labelDisplayName } from '../components/AnnotationControls'
 import HeaderUserMenu from '../components/HeaderUserMenu'
+import ProjectNav from '../components/ProjectNav'
+import { api } from '../api/client'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 
@@ -236,15 +238,20 @@ export default function TendencyPage() {
   const { data: schema } = useQuery({ queryKey: ['annotation-schema', pid], queryFn: () => getProjectSchema(pid) })
   const { data } = useQuery({ queryKey: ['tendency', pid], queryFn: () => getTendency(pid) })
   const name = (id: string) => (schema ? labelDisplayName(schema, id) : id)
+  const projectName = useQuery({ queryKey: ['project', pid], queryFn: () => api.getProject(pid) }).data?.name
 
   return (
     <div className="viz min-h-screen">
-      <header className="border-b px-6 py-2.5 flex items-center gap-2">
-        <Button variant="ghost" size="sm" className="px-2" onClick={() => navigate(`/projects/${pid}`)}>← 返回專案</Button>
-        <h1 className="text-sm font-semibold flex-1">標注傾向</h1>
-        <HeaderUserMenu />
+      <header className="sticky top-0 z-40 backdrop-blur-2xl bg-white/45 dark:bg-black/25 border-b border-black/8 dark:border-white/8 shadow-sm shadow-black/5">
+        <div className="max-w-6xl mx-auto px-6 pt-2.5 flex items-center gap-2">
+          <Button variant="ghost" size="sm" className="text-muted-foreground shrink-0 px-2" onClick={() => navigate('/')}>← 專案</Button>
+          <span className="text-border">／</span>
+          <h1 className="text-sm font-semibold truncate flex-1 min-w-0">{projectName ?? '載入中…'}</h1>
+          <HeaderUserMenu />
+        </div>
+        <ProjectNav projectId={pid} />
       </header>
-      <main className="max-w-5xl mx-auto px-4 py-6 space-y-8">
+      <main className="max-w-6xl mx-auto px-4 py-6 space-y-8">
         {!data || !schema ? <p className="text-sm text-muted-foreground">載入中…</p> : (
           <>
             <p className="text-xs text-muted-foreground">
