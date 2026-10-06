@@ -128,3 +128,31 @@ export function coerceAnnotationResult(value: unknown): AnnotationResult | null 
     metadata: obj.metadata && typeof obj.metadata === 'object' ? obj.metadata : {},
   }
 }
+
+export interface TendencyReport {
+  reviewed_total: number
+  pending_total: number
+  reviewers: {
+    name: string; reviewed: number; approved: number; corrected: number; uncertain: number
+    approve_rate: number | null; correction_rate: number | null
+    approve_ci: [number, number] | null
+    model_written: number; human_edited: number
+    first_row: number | null; last_row: number | null
+    top_labels: { label_id: string; rate: number | null }[]
+  }[]
+  reviewer_ranges_overlap: boolean
+  coverage: { start: number; end: number; total: number; pending: number; by: Record<string, number> }[]
+  reviewer_comparisons: {
+    a: string; b: string; p_value: number | null; p_adjusted: number | null
+    effect_phi: number | null; confounded: boolean; shared_share: number
+  }[]
+  compared_rows: number
+  relevance_flips: number
+  labels: {
+    label_id: string; ai_rate: number | null; final_rate: number | null
+    added_by_review: number; removed_by_review: number
+    p_adjusted: number | null; direction: 'added' | 'removed' | null
+  }[]
+}
+
+export const getTendency = (pid: number) => request<TendencyReport>(`/projects/${pid}/tendency`)
