@@ -37,10 +37,10 @@ export default function HomePage() {
             <p className="text-xs text-muted-foreground mt-0.5">管理資料集、標籤 Schema 與 AI / 人工標注結果</p>
           </div>
           <div className="flex items-center gap-3">
-            <HeaderUserMenu />
             {(user?.role === 'admin' || user?.role === 'reviewer') && (
               <Button onClick={() => setShowWizard(true)} size="sm">+ 新增專案</Button>
             )}
+            <HeaderUserMenu />
           </div>
         </div>
       </header>
