@@ -332,3 +332,15 @@ html.dark .assistant-glass-trigger {
   :is(.home-workspace, .project-workspace, .review-workspace) input:not([type="checkbox"]):not([type="radio"]),
   :is(.home-workspace, .project-workspace, .review-workspace) textarea { font-size: 16px; }
 }
+
+/* Data-viz tokens (categorical slots from the validated reference palette). */
+.viz {
+  --viz-1: #2a78d6; --viz-2: #eb6834; --viz-3: #1baf7a; --viz-4: #eda100;
+  --viz-7: #4a3aa7; --viz-neg: #e34948; --viz-muted: #b9b8b2;
+  --viz-grid: rgba(0, 0, 0, 0.08);
+}
+.dark .viz {
+  --viz-1: #3987e5; --viz-2: #d95926; --viz-3: #199e70; --viz-4: #c98500;
+  --viz-7: #9085e9; --viz-neg: #e66767; --viz-muted: #5b5a55;
+  --viz-grid: rgba(255, 255, 255, 0.1);
+}

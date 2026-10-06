@@ -356,6 +356,9 @@ export default function ProjectPage() {
                 onClick={() => api.exportProject(pid, `${project.name}.xlsx`).catch(e => alert(e.message))}>
                 匯出
               </Button>
+              <Button variant="outline" size="sm" onClick={() => navigate(`/projects/${pid}/tendency`)}>
+                標注傾向
+              </Button>
               <Button variant="outline" size="sm" onClick={() => setAdoptOpen(true)}
                 className="border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20">
                 一鍵套用

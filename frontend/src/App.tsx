@@ -7,6 +7,7 @@ import HomePage from './pages/HomePage'
 import ProjectPage from './pages/ProjectPage'
 import ProjectSettingsPage from './pages/ProjectSettingsPage'
 import ReviewPage from './pages/ReviewPage'
+import TendencyPage from './pages/TendencyPage'
 import UsersPage from './pages/UsersPage'
 import OAuthAuthorizePage from './pages/OAuthAuthorizePage'
 import ProjectAssistantDock from './components/ProjectAssistantDock'
@@ -38,6 +39,7 @@ function AppRoutes() {
         <Route path="/projects/:projectId" element={<RequireAuth><ProjectPage /></RequireAuth>} />
         <Route path="/projects/:projectId/settings" element={<RequireAuth><ProjectSettingsPage /></RequireAuth>} />
         <Route path="/projects/:projectId/review/:rowId" element={<RequireAuth><ReviewPage /></RequireAuth>} />
+        <Route path="/projects/:projectId/tendency" element={<RequireAuth><TendencyPage /></RequireAuth>} />
         <Route path="/users" element={<RequireAuth><RequireAdmin><UsersPage /></RequireAdmin></RequireAuth>} />
       </Routes>
       <ProjectAssistantDock />

@@ -18,6 +18,7 @@ from .routers import oauth as oauth_router
 from .routers import presence as presence_router
 from .routers import schemas as schemas_router
 from .routers import tasks as tasks_router
+from .routers import tendency as tendency_router
 from .routers import users as users_router
 
 app = FastAPI(title="Annotation Review Platform", version="5.1.0")
@@ -80,6 +81,12 @@ app.include_router(
     rows.router,
     prefix="/api/projects",
     tags=["rows"],
+    dependencies=[Depends(get_current_user)],
+)
+app.include_router(
+    tendency_router.router,
+    prefix="/api/projects",
+    tags=["tendency"],
     dependencies=[Depends(get_current_user)],
 )
 app.include_router(
