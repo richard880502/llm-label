@@ -162,4 +162,9 @@ if static_path.exists():
 
     @app.get("/{full_path:path}", include_in_schema=False)
     async def spa_fallback(full_path: str):
+        # 靜態根目錄下的實體檔案(apple-touch-icon、manifest、icon-*.png)直接回傳,
+        # 其餘路徑才交給前端路由
+        candidate = (static_path / full_path).resolve()
+        if full_path and candidate.is_file() and static_path.resolve() in candidate.parents:
+            return FileResponse(str(candidate))
         return FileResponse(str(static_path / "index.html"))
