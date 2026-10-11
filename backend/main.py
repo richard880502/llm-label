@@ -151,7 +151,6 @@ def oauth_authorization_server_metadata(request: Request):
     }
 
 static_path = Path(__file__).parent.parent / "static"
-STATIC_ROOT = static_path.resolve()
 if static_path.exists():
     assets_path = static_path / "assets"
     if assets_path.exists():
@@ -164,13 +163,8 @@ if static_path.exists():
     @app.get("/{full_path:path}", include_in_schema=False)
     async def spa_fallback(full_path: str):
         # 靜態根目錄下的實體檔案(apple-touch-icon、manifest、icon-*.png)直接回傳,
-        # 其餘路徑才交給前端路由
-        try:
-            candidate = (STATIC_ROOT / full_path).resolve()
-            candidate.relative_to(STATIC_ROOT)
-        except (ValueError, RuntimeError):
-            candidate = None
-
-        if full_path and candidate is not None and candidate.is_file():
-            return FileResponse(str(candidate))
-        return FileResponse(str(STATIC_ROOT / "index.html"))
+        # 其餘路徑才交給前端路由。只比對根目錄實際存在的檔名,不把請求路徑拼進檔案路徑。
+        for entry in static_path.iterdir():
+            if entry.is_file() and entry.name == full_path:
+                return FileResponse(str(entry))
+        return FileResponse(str(static_path / "index.html"))
