@@ -1,15 +1,18 @@
 name: Coolify deployment
 
 # Coolify deploys every push to main by itself (auto-deploy webhook). This workflow does NOT start a
-# deployment: it waits for the Coolify deployment of the pushed commit and reports the result to GitHub,
-# so it shows up under Deployments (environment, URL, Active) and as a green or red check on the commit.
+# deployment: it waits for the Coolify deployment of the pushed commit and reports the result to GitHub
+# as a Deployment (environment, URL, status, link to the Coolify log), created by a dedicated GitHub App
+# so that it shows the App's name and logo.
 #
 # Configuration (Settings > Secrets and variables > Actions):
-#   secret   COOLIFY_API_TOKEN   Coolify API token (read permission is enough)
-#   variable COOLIFY_URL         e.g. https://richard-coolify.duckdns.org
-#   variable COOLIFY_APP_UUIDS   space separated Coolify application UUIDs that this repo deploys
-#   variable DEPLOY_ENV_NAME     GitHub environment name (default: production)
-#   variable DEPLOY_ENV_URL      public URL shown next to the deployment
+#   secret   COOLIFY_API_TOKEN       Coolify API token (read permission is enough)
+#   secret   DEPLOY_APP_PRIVATE_KEY  private key of the GitHub App that creates the Deployment records
+#   variable DEPLOY_APP_ID           id of that GitHub App (permission: Deployments, read and write)
+#   variable COOLIFY_URL             e.g. https://richard-coolify.duckdns.org
+#   variable COOLIFY_APP_UUIDS       space separated Coolify application UUIDs that this repo deploys
+#   variable DEPLOY_ENV_NAME         GitHub environment name (default: production)
+#   variable DEPLOY_ENV_URL          public URL shown next to the deployment
 
 on:
   push:
@@ -20,7 +23,6 @@ on:
 
 permissions:
   contents: read
-  deployments: write
 
 concurrency:
   group: coolify-deployment-${{ github.ref }}
@@ -30,14 +32,38 @@ env:
   COOLIFY_URL: ${{ vars.COOLIFY_URL }}
   APP_UUIDS: ${{ vars.COOLIFY_APP_UUIDS }}
   COOLIFY_TOKEN: ${{ secrets.COOLIFY_API_TOKEN }}
+  ENV_NAME: ${{ vars.DEPLOY_ENV_NAME || 'production' }}
+  ENV_URL: ${{ vars.DEPLOY_ENV_URL }}
 
 jobs:
   check:
-    # Pull requests only verify that the Coolify API and token work. Nothing is deployed or reported.
+    # Pull requests only verify that the Coolify API, the token and the GitHub App work.
+    # Nothing is deployed and no Deployment record is created.
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    env:
+      # the secrets context cannot be used in step conditions, so expose "is it set" as an env var
+      HAS_APP_KEY: ${{ secrets.DEPLOY_APP_PRIVATE_KEY != '' }}
     steps:
+      - name: Create GitHub App token
+        id: app
+        if: env.HAS_APP_KEY == 'true'
+        uses: actions/create-github-app-token@v3.2.0
+        with:
+          app-id: ${{ vars.DEPLOY_APP_ID }}
+          private-key: ${{ secrets.DEPLOY_APP_PRIVATE_KEY }}
+          permission-deployments: write
+
+      - name: Verify the GitHub App can read Deployments
+        if: ${{ steps.app.outputs.token != '' }}
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/deployments?per_page=1" --silent
+          echo "OK: GitHub App token works and can access Deployments of $GITHUB_REPOSITORY"
+
       - name: Verify the Coolify API and token
         run: |
           set -euo pipefail
@@ -60,13 +86,34 @@ jobs:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    environment:
-      name: ${{ vars.DEPLOY_ENV_NAME || 'production' }}
-      url: ${{ vars.DEPLOY_ENV_URL }}
+    env:
+      SHA: ${{ github.sha }}
     steps:
-      - name: Wait for the Coolify deployment of this commit
+      - name: Create GitHub App token
+        id: app
+        uses: actions/create-github-app-token@v3.2.0
+        with:
+          app-id: ${{ vars.DEPLOY_APP_ID }}
+          private-key: ${{ secrets.DEPLOY_APP_PRIVATE_KEY }}
+          permission-deployments: write
+
+      - name: Create the GitHub Deployment (in progress)
+        id: dep
         env:
-          SHA: ${{ github.sha }}
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          set -euo pipefail
+          payload=$(jq -n --arg ref "$SHA" --arg env "$ENV_NAME" \
+            '{ref:$ref, environment:$env, auto_merge:false, required_contexts:[], production_environment:true, transient_environment:false, description:"Coolify deployment"}')
+          id=$(gh api "repos/$GITHUB_REPOSITORY/deployments" --input - --jq .id <<<"$payload")
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          jq -n --arg log "$run_url" '{state:"in_progress", log_url:$log, description:"Waiting for Coolify"}' \
+            | gh api "repos/$GITHUB_REPOSITORY/deployments/$id/statuses" --input - --silent
+          echo "GitHub deployment $id created"
+
+      - name: Wait for the Coolify deployment of this commit
+        id: wait
         run: |
           set -euo pipefail
           if [ -z "${COOLIFY_TOKEN:-}" ]; then
@@ -79,6 +126,7 @@ jobs:
               "$COOLIFY_URL/api/v1/$1"
           }
           fail=0
+          last_log=""
           for u in $APP_UUIDS; do
             name=$(api "applications/$u" | jq -r '.name // "app"')
             echo "::group::$name ($u)"
@@ -108,8 +156,8 @@ jobs:
               sleep 15
             done
             echo "Final status: $status"
-            log=$(api "deployments/$dep" | jq -r '.deployment_url // empty')
-            [ -n "$log" ] && echo "Coolify log: ${COOLIFY_URL}${log}"
+            path=$(api "deployments/$dep" | jq -r '.deployment_url // empty')
+            [ -n "$path" ] && last_log="${COOLIFY_URL}${path}" && echo "Coolify log: $last_log"
             echo "- $name: **$status** (deployment \`$dep\`, commit \`${SHA:0:7}\`)" >> "$GITHUB_STEP_SUMMARY"
             if [ "$status" != "finished" ]; then
               echo "::error::$name deployment ended as '$status'"
@@ -117,4 +165,34 @@ jobs:
             fi
             echo "::endgroup::"
           done
+          echo "log_url=$last_log" >> "$GITHUB_OUTPUT"
           exit $fail
+
+      - name: Create GitHub App token (for the final status)
+        id: app2
+        if: ${{ always() && steps.dep.outputs.id != '' }}
+        uses: actions/create-github-app-token@v3.2.0
+        with:
+          app-id: ${{ vars.DEPLOY_APP_ID }}
+          private-key: ${{ secrets.DEPLOY_APP_PRIVATE_KEY }}
+          permission-deployments: write
+
+      - name: Report the result to GitHub
+        if: ${{ always() && steps.dep.outputs.id != '' }}
+        env:
+          GH_TOKEN: ${{ steps.app2.outputs.token }}
+          DEP_ID: ${{ steps.dep.outputs.id }}
+          RESULT: ${{ job.status }}
+          COOLIFY_LOG: ${{ steps.wait.outputs.log_url }}
+        run: |
+          set -euo pipefail
+          case "$RESULT" in
+            success)   state=success;  desc="Deployed by Coolify" ;;
+            cancelled) state=inactive; desc="Cancelled" ;;
+            *)         state=failure;  desc="Coolify deployment failed" ;;
+          esac
+          log="${COOLIFY_LOG:-$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID}"
+          jq -n --arg s "$state" --arg d "$desc" --arg log "$log" --arg url "$ENV_URL" \
+            '{state:$s, description:$d, log_url:$log, auto_inactive:true} + (if $url != "" and $s == "success" then {environment_url:$url} else {} end)' \
+            | gh api "repos/$GITHUB_REPOSITORY/deployments/$DEP_ID/statuses" --input - --silent
+          echo "GitHub deployment $DEP_ID -> $state"
