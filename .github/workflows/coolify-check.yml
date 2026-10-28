@@ -1,0 +1,65 @@
+name: Coolify check
+
+# Pull requests only verify that the Coolify API, the token and the deployment GitHub App work.
+# Nothing is deployed and no Deployment record is created (see coolify-deployment.yml for that).
+# Skips silently when the secrets are not available (Dependabot, forks).
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: coolify-check-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  COOLIFY_URL: ${{ vars.COOLIFY_URL }}
+  APP_UUIDS: ${{ vars.COOLIFY_APP_UUIDS }}
+  COOLIFY_TOKEN: ${{ secrets.COOLIFY_API_TOKEN }}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      # the secrets context cannot be used in step conditions, so expose "is it set" as an env var
+      HAS_APP_KEY: ${{ secrets.DEPLOY_APP_PRIVATE_KEY != '' }}
+    steps:
+      - name: Create GitHub App token
+        id: app
+        if: env.HAS_APP_KEY == 'true'
+        uses: actions/create-github-app-token@v3.2.0
+        with:
+          app-id: ${{ vars.DEPLOY_APP_ID }}
+          private-key: ${{ secrets.DEPLOY_APP_PRIVATE_KEY }}
+          permission-deployments: write
+
+      - name: Verify the GitHub App can read Deployments
+        if: ${{ steps.app.outputs.token != '' }}
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/deployments?per_page=1" --silent
+          echo "OK: GitHub App token works and can access Deployments of $GITHUB_REPOSITORY"
+
+      - name: Verify the Coolify API and token
+        run: |
+          set -euo pipefail
+          if [ -z "${COOLIFY_TOKEN:-}" ]; then
+            echo "::notice::COOLIFY_API_TOKEN is not available for this run (Dependabot or fork). Skipping."
+            exit 0
+          fi
+          for u in $APP_UUIDS; do
+            code=$(curl -sS -o /tmp/app.json -w '%{http_code}' \
+              -H "Authorization: Bearer $COOLIFY_TOKEN" -H 'Accept: application/json' \
+              "$COOLIFY_URL/api/v1/applications/$u")
+            if [ "$code" != "200" ]; then
+              echo "::error::Coolify returned HTTP $code for application $u"
+              exit 1
+            fi
+            echo "OK: $(jq -r '.name + " (" + (.status // "unknown") + ")"' /tmp/app.json)"
+          done
