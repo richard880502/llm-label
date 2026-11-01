@@ -42,7 +42,7 @@ jobs:
     steps:
       - name: Create GitHub App token
         id: app
-        uses: actions/create-github-app-token@v3.2.0
+        uses: actions/create-github-app-token@v3.3.0
         with:
           app-id: ${{ vars.DEPLOY_APP_ID }}
           private-key: ${{ secrets.DEPLOY_APP_PRIVATE_KEY }}
@@ -122,7 +122,7 @@ jobs:
       - name: Create GitHub App token (for the final status)
         id: app2
         if: ${{ always() && steps.dep.outputs.id != '' }}
-        uses: actions/create-github-app-token@v3.2.0
+        uses: actions/create-github-app-token@v3.3.0
         with:
           app-id: ${{ vars.DEPLOY_APP_ID }}
           private-key: ${{ secrets.DEPLOY_APP_PRIVATE_KEY }}
