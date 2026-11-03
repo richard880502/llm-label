@@ -31,6 +31,17 @@ updates:
       time: "03:30"
       timezone: "Asia/Taipei"
     open-pull-requests-limit: 5
+    groups:
+      vite-toolchain:
+        patterns:
+          - "vite"
+          - "@vitejs/plugin-react"
+      react-runtime:
+        patterns:
+          - "react"
+          - "react-dom"
+          - "@types/react"
+          - "@types/react-dom"
     commit-message:
       prefix: "deps(frontend)"
 

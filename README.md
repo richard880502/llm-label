@@ -1,10 +1,19 @@
 # Annotation App
 
-**目前版本：v5.4.0**
+**目前版本：v5.5.0**
 
 多人協作的通用資料標注、AI 自動分類與人工複查平台。前端使用 React/Vite，後端使用 FastAPI，正式資料儲存在 PostgreSQL。
 
 v5 系列不再綁定固定的分類欄位或特定標籤集合，而是改成以 **Input Mapping + Annotation Schema + Codebook + Shared Prompt** 描述每個專案的資料與分類規則。
+
+## v5.5.0 更新重點
+
+- 升級 React 19.3、Vite 8.3 與 @vitejs/plugin-react 6.1，統一解決分別升級造成的 npm ERESOLVE。
+- GitHub Actions 與 Docker 前端使用 Node.js 24，Docker 改用 npm ci。
+- Dependabot 分組相關前端套件，避免彼此不相容的升級 PR。
+- 本次沒有變更後端 API、MCP 或 PostgreSQL schema。
+
+詳細內容請參閱 [CHANGELOG.md](CHANGELOG.md)。
 
 ## v5.4.0 更新重點
 
