@@ -1,5 +1,22 @@
 # 更新紀錄
 
+## v5.5.0 更新重點
+
+### 前端工具鏈升級
+
+- 同步升級 React / React DOM 至 19.3.1、@types/react / @types/react-dom 至 19.3.0、Vite 至 8.3.5、@vitejs/plugin-react 至 6.1.2，統一處理 PR #86、#90、#95、#96 的套件依賴衝突。
+- CI 前端 Node.js 由 20 調整至 24 LTS；Docker 前端 builder 由 Node.js 26 調整至 24 LTS，並改用 `npm ci` 鎖定依賴。
+- Dependabot 對 React 及 Vite 的關聯套件採分組更新，減少跨版本不一致。
+- 保留 React Router、Tailwind、API proxy 與 `../static` 的輸出路徑，無後端 API、MCP 或 PostgreSQL schema 遷移。
+
+### 驗收與部署注意
+
+- CI 必須通過 `npm ci`、`npm run build`、Docker build、後端測試與 MCP import check。
+- 上線前須驗證 OAuth 登入、專案資料匯入、標注、複查、匯出及主要 UI 操作；建置成功不代表完整功能測試通過。
+- MCP SDK 2.x 更新（PR #83）需另行遷移與 OAuth/MCP 功能驗證，未納入本版。
+- 正式環境可用先前 v5.4.0 應用映像回滾；本版不涉及資料庫變更。
+
+
 ## v5.4.0 更新重點
 
 - 新增「標注傾向」頁：直接用既有審查紀錄呈現審查者與 AI 的標注傾向，不需額外標注。
