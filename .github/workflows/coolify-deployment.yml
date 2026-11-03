@@ -8,7 +8,7 @@ name: Coolify deployment
 # Configuration (Settings > Secrets and variables > Actions):
 #   secret   COOLIFY_API_TOKEN       Coolify API token (read permission is enough)
 #   secret   DEPLOY_APP_PRIVATE_KEY  private key of the GitHub App that creates the Deployment records
-#   variable DEPLOY_APP_ID           id of that GitHub App (permission: Deployments, read and write)
+#   variable DEPLOY_APP_ID           id of that GitHub App (permissions: Checks and Deployments, read and write)
 #   variable COOLIFY_URL             e.g. https://richard-coolify.duckdns.org
 #   variable COOLIFY_APP_UUIDS       space separated Coolify application UUIDs that this repo deploys
 #   variable DEPLOY_ENV_NAME         GitHub environment name (default: production)
@@ -47,6 +47,19 @@ jobs:
           app-id: ${{ vars.DEPLOY_APP_ID }}
           private-key: ${{ secrets.DEPLOY_APP_PRIVATE_KEY }}
           permission-deployments: write
+          permission-checks: write
+
+      - name: Create the Coolify check
+        id: check
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          set -euo pipefail
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          id=$(jq -n --arg sha "$SHA" --arg url "$run_url" \
+            '{name:"Coolify", head_sha:$sha, status:"in_progress", details_url:$url, output:{title:"Deployment in progress", summary:"Waiting for Coolify deployment results."}}' \
+            | gh api "repos/$GITHUB_REPOSITORY/check-runs" --input - --jq .id)
+          echo "id=$id" >> "$GITHUB_OUTPUT"
 
       - name: Create the GitHub Deployment (in progress)
         id: dep
@@ -121,28 +134,37 @@ jobs:
 
       - name: Create GitHub App token (for the final status)
         id: app2
-        if: ${{ always() && steps.dep.outputs.id != '' }}
+        if: ${{ always() && steps.check.outputs.id != '' }}
         uses: actions/create-github-app-token@v3.3.0
         with:
           app-id: ${{ vars.DEPLOY_APP_ID }}
           private-key: ${{ secrets.DEPLOY_APP_PRIVATE_KEY }}
           permission-deployments: write
+          permission-checks: write
 
       - name: Report the result to GitHub
-        if: ${{ always() && steps.dep.outputs.id != '' }}
+        if: ${{ always() && steps.check.outputs.id != '' }}
         env:
           GH_TOKEN: ${{ steps.app2.outputs.token }}
           DEP_ID: ${{ steps.dep.outputs.id }}
+          CHECK_ID: ${{ steps.check.outputs.id }}
           RESULT: ${{ job.status }}
           COOLIFY_LOG: ${{ steps.wait.outputs.log_url }}
         run: |
           set -euo pipefail
           case "$RESULT" in
-            success)   state=success;  desc="Deployed by Coolify" ;;
-            cancelled) state=inactive; desc="Cancelled" ;;
-            *)         state=failure;  desc="Coolify deployment failed" ;;
+            success)   state=success; conclusion=success; desc="Deployed successfully" ;;
+            cancelled) state=inactive; conclusion=cancelled; desc="Cancelled" ;;
+            *)         state=failure; conclusion=failure; desc="Coolify deployment failed" ;;
           esac
           log="${COOLIFY_LOG:-$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID}"
+          jq -n --arg result "$conclusion" --arg title "$desc" --arg log "$log" \
+            '{status:"completed", conclusion:$result, details_url:$log, output:{title:$title, summary:("[View deployment logs](" + $log + ")")}}' \
+            | gh api "repos/$GITHUB_REPOSITORY/check-runs/$CHECK_ID" --method PATCH --input - --silent
+          if [ -z "$DEP_ID" ]; then
+            echo "No deployment record was created; check result reported."
+            exit 0
+          fi
           jq -n --arg s "$state" --arg d "$desc" --arg log "$log" --arg url "$ENV_URL" \
             '{state:$s, description:$d, log_url:$log, auto_inactive:true} + (if $url != "" and $s == "success" then {environment_url:$url} else {} end)' \
             | gh api "repos/$GITHUB_REPOSITORY/deployments/$DEP_ID/statuses" --input - --silent
