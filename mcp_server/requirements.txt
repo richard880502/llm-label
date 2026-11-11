@@ -2,5 +2,5 @@
 # MCP v2 removes mcp.server.fastmcp and is not yet compatible with this server.
 mcp>=1.28.1,<2.0.0
 # Keep SSE transport dependencies within the SDK v1-compatible major line.
-sse-starlette>=2.0.0,<3.0.0
+sse-starlette>=3.7.0,<4.0.0
 httpx>=0.28.1,<1
