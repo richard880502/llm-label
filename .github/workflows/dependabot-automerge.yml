@@ -66,7 +66,7 @@ jobs:
             // A grouped Dependabot PR can contain multiple version changes.
             // The single from/to regex below cannot prove that ALL are patch-only,
             // so keep grouped updates for human review even when checks pass.
-            if (/\bbump the .+ group(?: across |$)/i.test(pr.title)) {
+            if (/\bbump the .+ group\b/i.test(pr.title)) {
               core.notice('Grouped Dependabot updates require manual review.');
               core.setOutput('merge', 'false');
               return;
