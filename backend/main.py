@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Request
@@ -8,7 +9,7 @@ from psycopg_pool import PoolTimeout
 
 from .annotation.migrations import ensure_annotation_schema_columns
 from .auth import get_current_user
-from .database import init_db
+from .database import check_db_readiness, init_db
 from .llm.classifier import resume_stale_api_tasks, start_api_task_watchdog
 from .routers import export, projects, rows
 from .routers import auth as auth_router
@@ -22,6 +23,7 @@ from .routers import tendency as tendency_router
 from .routers import users as users_router
 
 app = FastAPI(title="Annotation Review Platform", version="5.1.0")
+logger = logging.getLogger(__name__)
 
 app.add_middleware(
     CORSMiddleware,
@@ -37,6 +39,23 @@ async def pool_timeout_handler(request: Request, exc: PoolTimeout) -> JSONRespon
         status_code=503,
         content={"detail": "Database is busy, please retry shortly."},
     )
+
+
+@app.get("/livez", include_in_schema=False)
+def livez():
+    """Liveness probe: the HTTP service is running; do not check dependencies."""
+    return {"status": "ok"}
+
+
+@app.get("/readyz", include_in_schema=False)
+def readyz():
+    """Readiness probe: the database must be available to serve requests."""
+    try:
+        check_db_readiness()
+    except Exception:
+        logger.exception("Readiness probe failed")
+        return JSONResponse(status_code=503, content={"status": "not_ready"})
+    return {"status": "ready"}
 
 
 @app.on_event("startup")

@@ -207,6 +207,14 @@ def get_db() -> DatabaseConnection:
     return DatabaseConnection(pool.getconn(), pool=pool)
 
 
+def check_db_readiness() -> None:
+    """Check PostgreSQL through the app pool with short, probe-specific limits."""
+    with _get_pool().connection(timeout=2) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("SET LOCAL statement_timeout = '2000ms'")
+            cursor.execute("SELECT 1")
+
+
 SCHEMA_STATEMENTS = [
     "CREATE EXTENSION IF NOT EXISTS pg_trgm",
     """

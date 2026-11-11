@@ -27,4 +27,7 @@ COPY deploy/nginx.conf /etc/nginx/nginx.conf
 COPY deploy/supervisord.conf /etc/supervisor/conf.d/annotation.conf
 COPY --from=frontend-builder /app/static ./static/
 EXPOSE 8080
+# Image default is liveness; compose overrides this with /readyz.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
+    CMD python -c "from urllib.request import urlopen; urlopen('http://127.0.0.1:8080/livez', timeout=3).close()"
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/annotation.conf"]
