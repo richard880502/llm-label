@@ -49,10 +49,18 @@ updates:
     open-pull-requests-limit: 5
     groups:
       vite-toolchain:
+        applies-to: version-updates
+        update-types:
+          - minor
+          - patch
         patterns:
           - "vite"
           - "@vitejs/plugin-react"
       react-runtime:
+        applies-to: version-updates
+        update-types:
+          - minor
+          - patch
         patterns:
           - "react"
           - "react-dom"
