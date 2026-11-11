@@ -152,6 +152,20 @@ Codebook 與 Few-shot 都屬於分類品質設定，但只有 Codebook 是日常
 
 PostgreSQL 資料保存在 Docker named volume `annotation-app_annotation_db`，不會因 App 容器重建而消失。API task checkpoint 同樣保存在 PostgreSQL，因此 App restart 後可以恢復尚未完成的分類工作。
 
+## 健康檢查
+
+- `GET /livez`：Liveness probe。HTTP 服務能回應即回傳 `200 {"status":"ok"}`，不檢查 PostgreSQL。
+- `GET /readyz`：Readiness probe。使用連線池執行限時的 PostgreSQL `SELECT 1`；成功回傳 `200 {"status":"ready"}`，失敗則回傳 `503 {"status":"not_ready"}`。端點不需登入，也不會出現在 OpenAPI 文件。
+- Dockerfile 預設用 `/livez` 判斷容器是否存活；Docker Compose 的 App `healthcheck` 覆寫為 `/readyz`，避免資料庫不可用時仍回報服務健康。兩者皆使用 Python 標準函式庫，不需額外安裝 curl。
+
+本地驗證：
+
+```bash
+curl -i http://localhost:8080/livez
+curl -i http://localhost:8080/readyz
+docker compose ps
+```
+
 ## 初次設定
 
 ```bash
