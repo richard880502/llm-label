@@ -14,7 +14,7 @@ ENV MCP_TRANSPORT=streamable-http
 ENV MCP_HOST=127.0.0.1
 ENV MCP_PORT=8000
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends nginx supervisor tzdata \
+    && apt-get install -y --no-install-recommends nginx supervisor tzdata curl \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY backend/requirements.txt .

@@ -91,8 +91,12 @@ jobs:
         run: npm run build
 
   mcp:
-    name: MCP import check
+    name: MCP import check (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.15"]
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -100,12 +104,14 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
           cache: pip
           cache-dependency-path: mcp_server/requirements.txt
 
       - name: Install dependencies
         run: pip install -r mcp_server/requirements.txt
 
-      - name: Compile MCP server
-        run: python -m py_compile mcp_server/server.py
+      - name: Compile and import MCP server
+        run: |
+          python -m py_compile mcp_server/server.py
+          python -c "from mcp.server.fastmcp import Context, FastMCP; import mcp_server.server"
