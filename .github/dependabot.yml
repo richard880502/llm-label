@@ -9,6 +9,14 @@ updates:
       time: "03:00"
       timezone: "Asia/Taipei"
     open-pull-requests-limit: 5
+    groups:
+      backend-routine:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
     commit-message:
       prefix: "deps(backend)"
 
@@ -20,6 +28,14 @@ updates:
       time: "03:15"
       timezone: "Asia/Taipei"
     open-pull-requests-limit: 5
+    groups:
+      mcp-routine:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
     commit-message:
       prefix: "deps(mcp)"
 
@@ -42,6 +58,13 @@ updates:
           - "react-dom"
           - "@types/react"
           - "@types/react-dom"
+      frontend-routine:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
     commit-message:
       prefix: "deps(frontend)"
 
@@ -53,6 +76,14 @@ updates:
       time: "04:00"
       timezone: "Asia/Taipei"
     open-pull-requests-limit: 5
+    groups:
+      app-base-images:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
     commit-message:
       prefix: "deps(docker)"
 
@@ -64,6 +95,14 @@ updates:
       time: "04:15"
       timezone: "Asia/Taipei"
     open-pull-requests-limit: 5
+    groups:
+      mcp-base-images:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
     commit-message:
       prefix: "deps(mcp-docker)"
 
@@ -75,5 +114,13 @@ updates:
       time: "04:30"
       timezone: "Asia/Taipei"
     open-pull-requests-limit: 5
+    groups:
+      actions-routine:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
     commit-message:
       prefix: "ci"
