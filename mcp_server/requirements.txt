@@ -1,6 +1,6 @@
 # server.py imports FastMCP from the MCP Python SDK v1 API.
 # MCP v2 removes mcp.server.fastmcp and is not yet compatible with this server.
-mcp>=1.28.1,<2.0.0
+mcp>=2.3.0,<3.0.0
 # Keep SSE transport dependencies within the SDK v1-compatible major line.
 sse-starlette>=2.0.0,<3.0.0
 httpx>=0.28.1,<1
