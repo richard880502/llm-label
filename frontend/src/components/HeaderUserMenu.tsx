@@ -1,6 +1,7 @@
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { useDarkMode } from '../hooks/useDarkMode'
+import DarkToggle from './DarkToggle'
 import ProjectTaskDock from './ProjectTaskDock'
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel,
@@ -19,17 +20,12 @@ export default function HeaderUserMenu() {
   return (
     <>
       <div className="flex items-center gap-1">
-        <button
-          onClick={toggle}
-          title={isDark ? '切換亮色模式' : '切換深色模式'}
-          className="w-8 h-8 flex items-center justify-center rounded-lg text-gray-400 dark:text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-sm"
-        >
-          {isDark ? '☀️' : '🌙'}
-        </button>
+        <DarkToggle isDark={isDark} toggle={toggle} />
 
         <DropdownMenu>
           <DropdownMenuTrigger
-            className="flex items-center gap-2 rounded-lg px-1.5 py-1 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors outline-none">
+            aria-label={`開啟 ${user?.username || ''} 的帳號選單`}
+            className="flex items-center gap-2 rounded-lg px-1.5 py-1 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-2">
             <div className="w-7 h-7 rounded-full bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300 text-xs font-bold flex items-center justify-center select-none shrink-0">
               {initial}
             </div>

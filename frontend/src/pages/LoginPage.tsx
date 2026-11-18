@@ -4,6 +4,8 @@ import { GoogleOAuthProvider, GoogleLogin } from '@react-oauth/google'
 import { api } from '../api/client'
 import { useAuth } from '../context/AuthContext'
 import DarkToggle from '../components/DarkToggle'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { useDarkMode } from '../hooks/useDarkMode'
 
 export default function LoginPage() {
@@ -90,47 +92,47 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center p-4 transition-colors">
+    <div className="login-workspace min-h-screen flex items-center justify-center px-5 py-20">
       <div className="absolute top-4 right-4">
         <DarkToggle isDark={isDark} toggle={toggle} />
       </div>
 
-      <div className="w-full max-w-sm">
+      <div className="w-full max-w-[420px]">
         <div className="text-center mb-8">
-          <div className="text-4xl mb-3">📋</div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">標注複查平台</h1>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">請登入以繼續</p>
+          <img src="/favicon.svg" alt="" width="52" height="52" className="mx-auto mb-5" />
+          <h1 className="text-2xl font-semibold text-foreground tracking-tight">標注複查平台</h1>
+          <p className="text-sm text-muted-foreground mt-2">請登入以繼續</p>
         </div>
 
-        <div className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 shadow-sm p-8 space-y-5">
+        <div className="login-panel p-7 sm:p-8 space-y-6">
 
           {!tempToken ? (
             <>
-              <form onSubmit={handleSubmit} className="space-y-4">
+              <form onSubmit={handleSubmit} className="space-y-5">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">帳號</label>
-                  <input type="text" value={username} onChange={e => setUsername(e.target.value)}
+                  <label htmlFor="username" className="block text-sm font-medium mb-2">帳號</label>
+                  <Input id="username" autoComplete="username" type="text" value={username} onChange={e => setUsername(e.target.value)}
                     placeholder="輸入帳號" autoFocus
-                    className="w-full border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                    className="h-11" />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">密碼</label>
-                  <input type="password" value={password} onChange={e => setPassword(e.target.value)}
+                  <label htmlFor="password" className="block text-sm font-medium mb-2">密碼</label>
+                  <Input id="password" autoComplete="current-password" type="password" value={password} onChange={e => setPassword(e.target.value)}
                     placeholder="輸入密碼"
-                    className="w-full border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                    className="h-11" />
                 </div>
-                <button type="submit" disabled={!username.trim() || !password || loading}
-                  className="w-full py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+                <Button type="submit" disabled={!username.trim() || !password || loading}
+                  className="w-full h-11 mt-1">
                   {loading ? '驗證中…' : '登入'}
-                </button>
+                </Button>
               </form>
 
               {googleClientId && (
                 <>
                   <div className="flex items-center gap-3">
-                    <div className="flex-1 h-px bg-gray-200 dark:bg-gray-600" />
-                    <span className="text-xs text-gray-400 dark:text-gray-500">或</span>
-                    <div className="flex-1 h-px bg-gray-200 dark:bg-gray-600" />
+                    <div className="flex-1 h-px bg-border" />
+                    <span className="text-xs text-muted-foreground">或</span>
+                    <div className="flex-1 h-px bg-border" />
                   </div>
                   <div className="flex justify-center">
                     <GoogleOAuthProvider clientId={googleClientId}>
@@ -144,30 +146,32 @@ export default function LoginPage() {
           ) : (
             <div className="space-y-5">
               <div className="text-center space-y-1">
-                <p className="text-base font-semibold text-gray-900 dark:text-gray-100">雙重驗證</p>
-                <p className="text-sm text-gray-500 dark:text-gray-400">請開啟 Google Authenticator 或 Authy，輸入 6 位數驗證碼</p>
+                <p className="text-base font-semibold text-foreground">雙重驗證</p>
+                <p className="text-sm text-muted-foreground">請開啟 Google Authenticator 或 Authy，輸入 6 位數驗證碼</p>
               </div>
               <input
                 ref={totpRef}
                 type="text"
+                aria-label="6 位數雙重驗證碼"
+                autoComplete="one-time-code"
                 inputMode="numeric"
                 value={totpCode}
                 onChange={e => handleTotpChange(e.target.value)}
                 placeholder="000000"
                 maxLength={6}
                 disabled={loading}
-                className="w-full text-center text-3xl font-mono tracking-[0.5em] border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-300 dark:placeholder-gray-600 rounded-lg px-3 py-4 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+                className="w-full text-center text-3xl font-mono tracking-[0.5em] border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-foreground placeholder-gray-300 dark:placeholder-gray-600 rounded-lg px-3 py-4 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
               />
-              {loading && <p className="text-center text-sm text-gray-400 dark:text-gray-500">驗證中…</p>}
+              {loading && <p className="text-center text-sm text-muted-foreground">驗證中…</p>}
               <button onClick={() => { setTempToken(null); setTotpCode(''); setError(null) }}
-                className="w-full py-2 text-sm text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 transition-colors">
+                className="w-full py-2 text-sm text-muted-foreground hover:text-gray-600 dark:hover:text-gray-300 transition-colors">
                 ← 返回重新輸入帳號密碼
               </button>
             </div>
           )}
 
           {error && (
-            <p className="text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-lg px-3 py-2">{error}</p>
+            <p role="alert" className="text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-lg px-3 py-2">{error}</p>
           )}
         </div>
       </div>
